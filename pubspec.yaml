@@ -14,6 +14,19 @@ dependencies:
   wakelock_plus: ^1.2.8
   shared_preferences: ^2.3.0
 
+dev_dependencies:
+  flutter_launcher_icons: ^0.14.1
+
+flutter_launcher_icons:
+  android: true
+  ios: false
+  # Flat icon used for legacy Android launcher targets
+  image_path: "assets/icon/app_icon.png"
+  min_sdk_android: 21
+  # Adaptive icon (Android 8+): solid navy background + transparent foreground
+  adaptive_icon_background: "#0A0F1E"
+  adaptive_icon_foreground: "assets/icon/app_icon_fg.png"
+
 flutter:
   uses-material-design: true
   assets:

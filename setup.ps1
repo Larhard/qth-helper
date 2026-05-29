@@ -62,6 +62,14 @@ if (-not (Test-Path 'assets\cities.tsv')) {
 Write-Host "`nRunning flutter pub get…" -ForegroundColor Cyan
 flutter pub get
 
+# 5. Generate app icon
+Write-Host "`nGenerating app icon…" -ForegroundColor Cyan
+python scripts\generate_icon.py
+
+# 6. Stamp all Android mipmap sizes
+Write-Host "`nStamping Android launcher icons…" -ForegroundColor Cyan
+flutter pub run flutter_launcher_icons
+
 Write-Host @"
 
 === Setup complete ===
@@ -74,5 +82,10 @@ To build a release APK:
 
     flutter build apk --release
     # Output: build\app\outputs\flutter-apk\app-release.apk
+
+To regenerate the icon after editing scripts/generate_icon.py:
+
+    python scripts\generate_icon.py
+    flutter pub run flutter_launcher_icons
 
 "@ -ForegroundColor Cyan
