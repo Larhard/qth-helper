@@ -1,6 +1,6 @@
 import 'dart:async';
-import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart' show Ticker;
 import 'package:flutter/services.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:flutter_compass/flutter_compass.dart';
@@ -39,8 +39,17 @@ class _HomeScreenState extends State<HomeScreen>
   String? _error;
   int _lastCompassMs = 0;
 
-  // ── MOB clear animation ───────────────────────────────────────────────────
-  late final AnimationController _mobClearCtrl;
+  // ── MOB hold-to-clear ───────────────────────────────────────────────────────
+  // Driven by a real Stopwatch, NOT an AnimationController. The clear is gated
+  // on ≥ _holdToClearMs of CONTINUOUS wall-clock holding, so it is immune to
+  // ticker mute/unmute jumps (immersive UI, overlays, route changes) that could
+  // otherwise make an AnimationController snap to "completed" on a brief tap.
+  static const _holdToClearMs = 3000;     // required continuous hold
+  static const _rewindPerFrame = 0.05;    // how fast the ring rewinds on release
+  late final Ticker _holdTicker;
+  final Stopwatch _holdWatch = Stopwatch();
+  bool _holding = false;
+  double _clearProgress = 0.0;            // 0.0 → 1.0, drives the border ring
 
   // ── Derived ───────────────────────────────────────────────────────────────
   bool get _usingGps {
@@ -59,16 +68,7 @@ class _HomeScreenState extends State<HomeScreen>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
 
-    _mobClearCtrl = AnimationController(
-      vsync: this,
-      duration: const Duration(seconds: 3),
-    )..addStatusListener((s) {
-        if (s == AnimationStatus.completed) {
-          _mobClearCtrl.reset();
-          HapticFeedback.heavyImpact();
-          _clearMob();
-        }
-      });
+    _holdTicker = createTicker(_onHoldTick);
 
     _loadMob();
     _init();
@@ -77,7 +77,7 @@ class _HomeScreenState extends State<HomeScreen>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    _mobClearCtrl.dispose();
+    _holdTicker.dispose();
     _posSub?.cancel();
     _compassSub?.cancel();
     super.dispose();
@@ -179,21 +179,54 @@ class _HomeScreenState extends State<HomeScreen>
     if (mounted) setState(() => _mob = null);
   }
 
+  /// Finger pressed down on the MOB card — begin (or resume) timing the hold.
   void _startMobClear() {
-    if (_mob != null && !_mobClearCtrl.isAnimating) {
-      _mobClearCtrl.forward();
+    if (_mob == null) return;
+    _holding = true;
+    _holdWatch
+      ..reset()
+      ..start();
+    if (!_holdTicker.isActive) _holdTicker.start();
+  }
+
+  /// Finger lifted or gesture cancelled — stop timing. The ring then rewinds
+  /// to zero. Because the stopwatch is stopped here, a brief tap can never
+  /// accumulate the 3 s required to clear.
+  void _cancelMobClear() {
+    _holding = false;
+    _holdWatch
+      ..stop()
+      ..reset();
+    // Leave the ticker running so it can animate the ring back to 0.
+    if (_clearProgress > 0 && !_holdTicker.isActive) _holdTicker.start();
+  }
+
+  /// Single source of truth for the ring + the clear decision, driven by the
+  /// real stopwatch — not by any animation's internal clock.
+  void _onHoldTick(Duration _) {
+    if (_holding) {
+      final elapsed = _holdWatch.elapsedMilliseconds;
+      final p = (elapsed / _holdToClearMs).clamp(0.0, 1.0);
+      if (p != _clearProgress) setState(() => _clearProgress = p);
+      // Clear ONLY after a genuine, continuous 3 s hold.
+      if (elapsed >= _holdToClearMs) _finishClear();
+    } else {
+      // Released: rewind the ring smoothly toward 0, then stop the ticker.
+      final next = (_clearProgress - _rewindPerFrame).clamp(0.0, 1.0);
+      setState(() => _clearProgress = next);
+      if (next <= 0.0) _holdTicker.stop();
     }
   }
 
-  void _cancelMobClear() {
-    if (_mobClearCtrl.value > 0 || _mobClearCtrl.isAnimating) {
-      final ms = (_mobClearCtrl.value * 400).round() + 80;
-      _mobClearCtrl.animateTo(
-        0.0,
-        duration: Duration(milliseconds: ms),
-        curve: Curves.easeOut,
-      );
-    }
+  void _finishClear() {
+    _holding = false;
+    _holdWatch
+      ..stop()
+      ..reset();
+    _holdTicker.stop();
+    setState(() => _clearProgress = 0.0);
+    HapticFeedback.heavyImpact();
+    _clearMob();
   }
 
   void _copyToClipboard(String text) {
@@ -409,14 +442,8 @@ class _HomeScreenState extends State<HomeScreen>
       onPointerDown: (_) => _startMobClear(),
       onPointerUp: (_) => _cancelMobClear(),
       onPointerCancel: (_) => _cancelMobClear(),
-      child: AnimatedBuilder(
-        animation: _mobClearCtrl,
-        builder: (ctx, child) => CustomPaint(
-          painter: _MobBorderPainter(_mobClearCtrl.value),
-          child: child,
-        ),
-        // child is rebuilt only when _mob / pos changes, not on every
-        // animation tick — the painter handles the border independently.
+      child: CustomPaint(
+        painter: _MobBorderPainter(_clearProgress),
         child: Padding(
           padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
           child: Column(
