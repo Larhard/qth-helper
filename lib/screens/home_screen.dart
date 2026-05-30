@@ -316,40 +316,29 @@ Color get _headingColor => _usingGps ? const Color(0xFF69F0AE) : Colors.white;
   Widget _buildLandscape(Position pos) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      // IntrinsicHeight lets the vertical divider stretch to match the taller column.
-      child: IntrinsicHeight(
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            // Left column: heading arrow + degrees + speed + source, stacked vertically
-            // so it fits the reduced landscape height without wrapping.
-            SizedBox(
-              width: 140,
-              child: _headingSectionLandscape(pos),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Left column: compact vertical heading — fits the reduced landscape height.
+          SizedBox(width: 140, child: _headingSectionLandscape(pos)),
+          const SizedBox(width: 32),
+          // Right column: compact coords/city/MOB sized to always fit without scrolling.
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _coordsSectionLandscape(pos),
+                if (_nearestCity != null) ...[
+                  _dividerCompact(),
+                  _citySectionLandscape(_nearestCity!),
+                ],
+                _dividerCompact(),
+                _mobSectionLandscape(pos),
+              ],
             ),
-            const SizedBox(width: 20),
-            Container(width: 1, color: const Color(0xFF1A1A1A)),
-            const SizedBox(width: 20),
-            // Right column: coordinates, city, MOB — scrollable in case of overflow.
-            Expanded(
-              child: SingleChildScrollView(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _coordsSection(pos),
-                    if (_nearestCity != null) ...[
-                      _divider(),
-                      _citySection(_nearestCity!),
-                    ],
-                    _divider(),
-                    _mobSection(pos),
-                    const SizedBox(height: 4),
-                  ],
-                ),
-              ),
-            ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
@@ -409,6 +398,168 @@ Color get _headingColor => _usingGps ? const Color(0xFF69F0AE) : Colors.white;
             style: const TextStyle(
                 fontSize: 11, color: Color(0xFF686868), letterSpacing: 2.0)),
       ],
+    );
+  }
+
+  // ── Landscape compact helpers ─────────────────────────────────────────────
+  // Sized to fit the ~300 dp landscape height of a 720×1600 px phone without
+  // any scrolling, while keeping all data readable at arm's length.
+
+  Widget _dividerCompact() => const Padding(
+        padding: EdgeInsets.symmetric(vertical: 8),
+        child: Divider(color: Color(0xFF1A1A1A), height: 1),
+      );
+
+  Widget _coordsSectionLandscape(Position pos) {
+    final latStr = formatLat(pos.latitude);
+    final lonStr = formatLon(pos.longitude);
+    final locStr = maidenhead(pos.latitude, pos.longitude);
+
+    const coordStyle = TextStyle(
+      fontSize: 22,
+      color: Color(0xFF00E5FF),
+      fontWeight: FontWeight.w600,
+      fontFeatures: [FontFeature.tabularFigures()],
+    );
+
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      GestureDetector(
+        onTap: () => _copyToClipboard('$latStr\n$lonStr'),
+        behavior: HitTestBehavior.opaque,
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(latStr, style: coordStyle),
+          const SizedBox(height: 2),
+          Text(lonStr, style: coordStyle),
+        ]),
+      ),
+      const SizedBox(height: 6),
+      GestureDetector(
+        onTap: () => _copyToClipboard(locStr),
+        child: Text(locStr,
+            style: const TextStyle(
+                fontSize: 20,
+                color: Color(0xFF69F0AE),
+                fontWeight: FontWeight.w700,
+                letterSpacing: 3,
+                fontFeatures: [FontFeature.tabularFigures()])),
+      ),
+    ]);
+  }
+
+  Widget _citySectionLandscape(NearestCity nc) {
+    return Row(children: [
+      ArrowWidget(bearingDeg: nc.bearingDeg, color: const Color(0xFFFFD740), size: 44),
+      const SizedBox(width: 12),
+      Expanded(
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(nc.city.name,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                  fontSize: 22, fontWeight: FontWeight.w700, color: Color(0xFFFFD740))),
+          Row(children: [
+            Text('${nc.bearingDeg.round()}°',
+                style: const TextStyle(
+                    fontSize: 16,
+                    color: Color(0xFFFFAB40),
+                    fontFeatures: [FontFeature.tabularFigures()])),
+            const SizedBox(width: 14),
+            Text(formatDistance(nc.distKm),
+                style: const TextStyle(
+                    fontSize: 16,
+                    color: Color(0xFFFFD740),
+                    fontWeight: FontWeight.w600,
+                    fontFeatures: [FontFeature.tabularFigures()])),
+          ]),
+        ]),
+      ),
+    ]);
+  }
+
+  Widget _mobSectionLandscape(Position pos) {
+    if (_mob == null) {
+      return SizedBox(
+        width: double.infinity,
+        height: 56,
+        child: ElevatedButton(
+          onPressed: _setMob,
+          style: ElevatedButton.styleFrom(
+            backgroundColor: const Color(0xFFB71C1C),
+            foregroundColor: Colors.white,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+            elevation: 0,
+          ),
+          child: const Text('MOB',
+              style: TextStyle(
+                  fontSize: 30, fontWeight: FontWeight.w900, letterSpacing: 4)),
+        ),
+      );
+    }
+
+    final mob = _mob!;
+    final b = bearing(pos.latitude, pos.longitude, mob.lat, mob.lon);
+    final d = haversineKm(pos.latitude, pos.longitude, mob.lat, mob.lon);
+
+    return Listener(
+      onPointerDown: (_) => _startMobClear(),
+      onPointerUp: (_) => _cancelMobClear(),
+      onPointerCancel: (_) => _cancelMobClear(),
+      child: CustomPaint(
+        painter: _MobBorderPainter(_clearProgress),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(children: [
+                ArrowWidget(bearingDeg: b, color: const Color(0xFFFF5252), size: 44),
+                const SizedBox(width: 12),
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  const Text('MOB',
+                      style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w900,
+                          color: Color(0xFFFF5252),
+                          letterSpacing: 3)),
+                  Row(children: [
+                    Text('${b.round()}°',
+                        style: const TextStyle(
+                            fontSize: 16,
+                            color: Color(0xFFFF1744),
+                            fontFeatures: [FontFeature.tabularFigures()])),
+                    const SizedBox(width: 12),
+                    Text(formatDistance(d),
+                        style: const TextStyle(
+                            fontSize: 16,
+                            color: Color(0xFFFF5252),
+                            fontWeight: FontWeight.w600,
+                            fontFeatures: [FontFeature.tabularFigures()])),
+                  ]),
+                ]),
+              ]),
+              const SizedBox(height: 4),
+              Text(formatLat(mob.lat),
+                  style: const TextStyle(
+                      fontSize: 12,
+                      color: Color(0xFF883333),
+                      fontFeatures: [FontFeature.tabularFigures()])),
+              Text(formatLon(mob.lon),
+                  style: const TextStyle(
+                      fontSize: 12,
+                      color: Color(0xFF883333),
+                      fontFeatures: [FontFeature.tabularFigures()])),
+              const SizedBox(height: 4),
+              const Align(
+                alignment: Alignment.centerRight,
+                child: Text('HOLD 3s TO CLEAR',
+                    style: TextStyle(
+                        fontSize: 10,
+                        color: Color(0xFF4A1A1A),
+                        letterSpacing: 1.5)),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 
