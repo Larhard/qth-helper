@@ -63,6 +63,21 @@ class _HomeScreenState extends State<HomeScreen>
 Color get _headingColor => _usingGps ? const Color(0xFF69F0AE) : Colors.white;
   String get _sourceLabel => _usingGps ? 'TRUE · GPS' : 'TRUE · MAG';
 
+  // Color progression signals precision level intuitively:
+  //   orange  = global overview (5 000 cities) — warmest, least detail
+  //   amber   = regional (~47 000 cities, pop >= 5 000)
+  //   green   = local (~140 000 cities, pop >= 1 000) — coolest, most detail
+  Color get _cityColor => switch (CityService.instance.mode) {
+    CityMode.large    => const Color(0xFFFF9800),
+    CityMode.precise  => const Color(0xFFFFD740),
+    CityMode.detailed => const Color(0xFF69F0AE),
+  };
+  Color get _citySubColor => switch (CityService.instance.mode) {
+    CityMode.large    => const Color(0xFFE65100),
+    CityMode.precise  => const Color(0xFFFFAB40),
+    CityMode.detailed => const Color(0xFF1DE9B6),
+  };
+
   // ── Lifecycle ─────────────────────────────────────────────────────────────
   @override
   void initState() {
@@ -235,6 +250,17 @@ Color get _headingColor => _usingGps ? const Color(0xFF69F0AE) : Colors.white;
     setState(() => _clearProgress = 0.0);
     HapticFeedback.heavyImpact();
     _clearMob();
+  }
+
+  void _toggleCityMode() {
+    CityService.instance.toggleMode();
+    // Recalculate immediately with the new dataset.
+    _lastCityCalcPos = null;
+    final pos = _position;
+    if (pos != null) {
+      final city = CityService.instance.nearest(pos.latitude, pos.longitude);
+      setState(() => _nearestCity = city);
+    }
   }
 
   void _copyToClipboard(String text) {
@@ -447,32 +473,38 @@ Color get _headingColor => _usingGps ? const Color(0xFF69F0AE) : Colors.white;
   }
 
   Widget _citySectionLandscape(NearestCity nc) {
-    return Row(children: [
-      ArrowWidget(bearingDeg: nc.bearingDeg, color: const Color(0xFFFFD740), size: 44),
-      const SizedBox(width: 12),
-      Expanded(
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(nc.city.name,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                  fontSize: 22, fontWeight: FontWeight.w700, color: Color(0xFFFFD740))),
-          Row(children: [
-            Text('${nc.bearingDeg.round()}°',
-                style: const TextStyle(
-                    fontSize: 16,
-                    color: Color(0xFFFFAB40),
-                    fontFeatures: [FontFeature.tabularFigures()])),
-            const SizedBox(width: 14),
-            Text(formatDistance(nc.distKm),
-                style: const TextStyle(
-                    fontSize: 16,
-                    color: Color(0xFFFFD740),
-                    fontWeight: FontWeight.w600,
-                    fontFeatures: [FontFeature.tabularFigures()])),
+    final color = _cityColor;
+    final subColor = _citySubColor;
+    return GestureDetector(
+      onTap: _toggleCityMode,
+      behavior: HitTestBehavior.opaque,
+      child: Row(children: [
+        ArrowWidget(bearingDeg: nc.bearingDeg, color: color, size: 44),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(nc.city.name,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                    fontSize: 22, fontWeight: FontWeight.w700, color: color)),
+            Row(children: [
+              Text('${nc.bearingDeg.round()}°',
+                  style: TextStyle(
+                      fontSize: 16,
+                      color: subColor,
+                      fontFeatures: const [FontFeature.tabularFigures()])),
+              const SizedBox(width: 14),
+              Text(formatDistance(nc.distKm),
+                  style: TextStyle(
+                      fontSize: 16,
+                      color: color,
+                      fontWeight: FontWeight.w600,
+                      fontFeatures: const [FontFeature.tabularFigures()])),
+            ]),
           ]),
-        ]),
-      ),
-    ]);
+        ),
+      ]),
+    );
   }
 
   Widget _mobSectionLandscape(Position pos) {
@@ -662,29 +694,35 @@ Color get _headingColor => _usingGps ? const Color(0xFF69F0AE) : Colors.white;
 
   // ── City ──────────────────────────────────────────────────────────────────
   Widget _citySection(NearestCity nc) {
-    return Row(children: [
-      ArrowWidget(bearingDeg: nc.bearingDeg, color: const Color(0xFFFFD740), size: 60),
-      const SizedBox(width: 16),
-      Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text(nc.city.name,
-            style: const TextStyle(
-                fontSize: 30, fontWeight: FontWeight.w700, color: Color(0xFFFFD740))),
-        Row(children: [
-          Text('${nc.bearingDeg.round()}°',
-              style: const TextStyle(
-                  fontSize: 20,
-                  color: Color(0xFFFFAB40),
-                  fontFeatures: [FontFeature.tabularFigures()])),
-          const SizedBox(width: 18),
-          Text(formatDistance(nc.distKm),
-              style: const TextStyle(
-                  fontSize: 20,
-                  color: Color(0xFFFFD740),
-                  fontWeight: FontWeight.w600,
-                  fontFeatures: [FontFeature.tabularFigures()])),
+    final color = _cityColor;
+    final subColor = _citySubColor;
+    return GestureDetector(
+      onTap: _toggleCityMode,
+      behavior: HitTestBehavior.opaque,
+      child: Row(children: [
+        ArrowWidget(bearingDeg: nc.bearingDeg, color: color, size: 60),
+        const SizedBox(width: 16),
+        Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(nc.city.name,
+              style: TextStyle(
+                  fontSize: 30, fontWeight: FontWeight.w700, color: color)),
+          Row(children: [
+            Text('${nc.bearingDeg.round()}°',
+                style: TextStyle(
+                    fontSize: 20,
+                    color: subColor,
+                    fontFeatures: const [FontFeature.tabularFigures()])),
+            const SizedBox(width: 18),
+            Text(formatDistance(nc.distKm),
+                style: TextStyle(
+                    fontSize: 20,
+                    color: color,
+                    fontWeight: FontWeight.w600,
+                    fontFeatures: const [FontFeature.tabularFigures()])),
+          ]),
         ]),
       ]),
-    ]);
+    );
   }
 
   // ── MOB ───────────────────────────────────────────────────────────────────
