@@ -98,7 +98,7 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   double get _heading => _usingGps ? _position!.heading : _compassHeading;
-  Color get _headingColor => _usingGps ? const Color(0xFF69F0AE) : Colors.white;
+  Color get _headingColor => _usingGps ? const Color(0xFF55DD55) : Colors.white;
   String get _sourceLabel => _usingGps ? 'GPS' : 'MAG';
 
   // Color progression follows the warm spectrum — orange → amber → lime —
@@ -806,9 +806,9 @@ class _HomeScreenState extends State<HomeScreen>
   Widget _locatorRow({required double fontSize, required double letterSpacing}) {
     final isMaidenhead = _locatorType == LocatorType.maidenhead;
     final locColor =
-        isMaidenhead ? const Color(0xFF69F0AE) : const Color(0xFFFFA726);
+        isMaidenhead ? const Color(0xFF55DD55) : const Color(0xFFFFA726);
     final labelColor =
-        isMaidenhead ? const Color(0xFF1DE9B6) : const Color(0xFFE65100);
+        isMaidenhead ? const Color(0xFF3DBF3D) : const Color(0xFFE65100);
     final locFontSize = isMaidenhead ? fontSize : fontSize * 0.72;
     final locLetterSpacing = isMaidenhead ? letterSpacing : 0.5;
     final label = isMaidenhead ? 'IARU' : 'MGRS';
@@ -858,31 +858,31 @@ class _HomeScreenState extends State<HomeScreen>
 
   Widget _timeRow() {
     if (_cachedTimeStr.isEmpty) return const SizedBox.shrink();
-    // UTC = neutral grey (universal/standard), LCL = warm amber (personal/local).
-    // No blue in either — avoids chromatic-aberration blur for sensitive users.
-    final color = _timeUtc ? const Color(0xFFCCCCCC) : const Color(0xFFFFB74D);
+    // UTC = green (universal standard — matches IARU locator convention).
+    // LCL = amber (regional/local — matches MGRS locator convention).
+    final color = _timeUtc ? const Color(0xFF55DD55) : const Color(0xFFFFB74D);
     final label = _timeUtc ? 'UTC' : 'LCL';
     final labelColor =
-        _timeUtc ? const Color(0xFF999999) : const Color(0xFFE65100);
+        _timeUtc ? const Color(0xFF3DBF3D) : const Color(0xFFE65100);
     return GestureDetector(
       onLongPress: _toggleTimeZone,
       behavior: HitTestBehavior.opaque,
       child: Row(children: [
         Text(_cachedDateStr,
             style: TextStyle(
-                fontSize: 12,
+                fontSize: 14,
                 color: color,
                 fontFeatures: const [FontFeature.tabularFigures()])),
         const SizedBox(width: 8),
         Text(_cachedTimeStr,
             style: TextStyle(
-                fontSize: 12,
+                fontSize: 14,
                 color: color,
                 fontFeatures: const [FontFeature.tabularFigures()])),
         const SizedBox(width: 6),
         Text(label,
             style: TextStyle(
-                fontSize: 10,
+                fontSize: 11,
                 fontWeight: FontWeight.w700,
                 color: labelColor,
                 letterSpacing: 1.5)),
@@ -1053,7 +1053,7 @@ class _HomeScreenState extends State<HomeScreen>
               Row(children: [
                 ArrowWidget(
                     bearingDeg: b,
-                    color: const Color(0xFFFF5252),
+                    color: const Color(0xFFFF3333),
                     size: arrowSize),
                 const SizedBox(width: 14),
                 Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -1061,13 +1061,13 @@ class _HomeScreenState extends State<HomeScreen>
                       style: TextStyle(
                           fontSize: nameFontSize,
                           fontWeight: FontWeight.w900,
-                          color: const Color(0xFFFF5252),
+                          color: const Color(0xFFFF3333),
                           letterSpacing: 1.5)),
                   Row(children: [
                     Text('${b.round()}°',
                         style: TextStyle(
                             fontSize: dataFontSize,
-                            color: const Color(0xFFFF1744),
+                            color: const Color(0xFFFF2020),
                             fontFeatures: const [
                               FontFeature.tabularFigures()
                             ])),
@@ -1075,7 +1075,7 @@ class _HomeScreenState extends State<HomeScreen>
                     Text(formatDistanceUnit(d, _speedUnit),
                         style: TextStyle(
                             fontSize: dataFontSize,
-                            color: const Color(0xFFFF5252),
+                            color: const Color(0xFFFF3333),
                             fontWeight: FontWeight.w600,
                             fontFeatures: const [
                               FontFeature.tabularFigures()

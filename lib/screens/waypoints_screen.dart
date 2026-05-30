@@ -82,20 +82,20 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
         : mgrs(wp.lat, wp.lon);
     final locLabel = widget.locatorType == LocatorType.maidenhead ? 'IARU' : 'MGRS';
     final locColor = widget.locatorType == LocatorType.maidenhead
-        ? const Color(0xFF69F0AE)
+        ? const Color(0xFF55DD55)
         : const Color(0xFFFFA726);
 
     return ListTile(
       tileColor: isActive ? const Color(0xFF1A0000) : Colors.transparent,
       leading: Icon(
         isActive ? Icons.navigation : Icons.location_on_outlined,
-        color: isActive ? const Color(0xFFFF5252) : const Color(0xFF777777),
+        color: isActive ? const Color(0xFFFF3333) : const Color(0xFF777777),
         size: 22,
       ),
       title: Text(
         wp.name,
         style: TextStyle(
-          color: isActive ? const Color(0xFFFF5252) : Colors.white,
+          color: isActive ? const Color(0xFFFF3333) : Colors.white,
           fontWeight: isActive ? FontWeight.w700 : FontWeight.w400,
           fontSize: 16,
         ),
@@ -299,7 +299,7 @@ class _WptEditSheetState extends State<_WptEditSheet> {
               widget.onSaved();
             },
             style: TextButton.styleFrom(
-                foregroundColor: const Color(0xFFFF5252)),
+                foregroundColor: const Color(0xFFFF3333)),
             child: const Text('Delete'),
           ),
         ],
@@ -373,7 +373,7 @@ class _WptEditSheetState extends State<_WptEditSheet> {
                           padding: const EdgeInsets.symmetric(
                               horizontal: 12, vertical: 8),
                           backgroundColor: const Color(0xFF1A2A1A),
-                          foregroundColor: const Color(0xFF69F0AE),
+                          foregroundColor: const Color(0xFF55DD55),
                           shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(4)),
                         ),
@@ -393,7 +393,7 @@ class _WptEditSheetState extends State<_WptEditSheet> {
               TextButton(
                 onPressed: _confirmDelete,
                 style: TextButton.styleFrom(
-                    foregroundColor: const Color(0xFFFF5252)),
+                    foregroundColor: const Color(0xFFFF3333)),
                 child: const Text('Delete'),
               ),
             const Spacer(),
