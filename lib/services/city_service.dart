@@ -1,4 +1,5 @@
 import 'package:flutter/services.dart';
+import 'package:get_storage/get_storage.dart';
 import '../models/city.dart';
 import '../utils/geo_utils.dart';
 
@@ -18,8 +19,13 @@ class CityService {
   Map<int, List<City>> _detailedGrid = {};
   bool loaded = false;
 
-  CityMode _mode = CityMode.large;
+  static final _store = GetStorage();
+  static const _modeKey = 'city_mode';
+
   CityMode get mode => _mode;
+  CityMode _mode = CityMode.values[
+    (GetStorage().read<int>(_modeKey) ?? 0).clamp(0, CityMode.values.length - 1)
+  ];
 
   void toggleMode() {
     _mode = switch (_mode) {
@@ -27,6 +33,7 @@ class CityService {
       CityMode.precise  => CityMode.detailed,
       CityMode.detailed => CityMode.large,
     };
+    _store.write(_modeKey, _mode.index);
   }
 
   // ── Loading ────────────────────────────────────────────────────────────────
