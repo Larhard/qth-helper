@@ -32,6 +32,8 @@ class _HomeScreenState extends State<HomeScreen>
   // ── App state ─────────────────────────────────────────────────────────────
   Position? _position;
   double _compassHeading = 0;
+  // ValueNotifier drives the secondary arrow directly, bypassing setState batching.
+  final _compassNotifier = ValueNotifier<double>(0.0);
   double? _lastValidGpsHeading;
   NearestCity? _nearestCity;
   Position? _lastCityCalcPos;
@@ -58,8 +60,7 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   double get _heading => _usingGps ? _position!.heading : _compassHeading;
-  double? get _secondaryHeading => _usingGps ? _compassHeading : _lastValidGpsHeading;
-  Color get _headingColor => _usingGps ? const Color(0xFF69F0AE) : Colors.white;
+Color get _headingColor => _usingGps ? const Color(0xFF69F0AE) : Colors.white;
   String get _sourceLabel => _usingGps ? 'TRUE · GPS' : 'TRUE · MAG';
 
   // ── Lifecycle ─────────────────────────────────────────────────────────────
@@ -78,6 +79,7 @@ class _HomeScreenState extends State<HomeScreen>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _holdTicker.dispose();
+    _compassNotifier.dispose();
     _posSub?.cancel();
     _compassSub?.cancel();
     super.dispose();
@@ -161,7 +163,13 @@ class _HomeScreenState extends State<HomeScreen>
       if (now - _lastCompassMs < _compassIntervalMs) return;
       _lastCompassMs = now;
       final corrected = (h + DeclinationService.instance.declination + 360) % 360;
-      if (mounted) setState(() => _compassHeading = corrected);
+      // Always push to the notifier so the secondary arrow repaints immediately,
+      // independently of whether the GPS stream is also triggering setStates.
+      _compassHeading = corrected;
+      _compassNotifier.value = corrected;
+      // Only call setState when compass is the primary display source — the
+      // primary arrow reads _compassHeading and needs a full widget rebuild.
+      if (!_usingGps && mounted) setState(() {});
     });
   }
 
@@ -309,7 +317,6 @@ class _HomeScreenState extends State<HomeScreen>
   Widget _headingSection(Position pos) {
     final color = _headingColor;
     final primary = _heading;
-    final secondary = _secondaryHeading;
     final speedKmh = pos.speed * 3.6;
     final speedStr = speedKmh < 0.5
         ? '0.0 km/h'
@@ -322,11 +329,24 @@ class _HomeScreenState extends State<HomeScreen>
         width: 80,
         height: 80,
         child: Stack(alignment: Alignment.center, children: [
-          if (secondary != null)
-            Opacity(
-              opacity: 0.18,
-              child: ArrowWidget(bearingDeg: secondary, color: Colors.white, size: 80),
-            ),
+          // Secondary arrow — uses ValueListenableBuilder so it repaints on
+          // every compass event directly, without waiting for a GPS setState.
+          ValueListenableBuilder<double>(
+            valueListenable: _compassNotifier,
+            builder: (_, compassBearing, __) {
+              final secondaryBearing =
+                  _usingGps ? compassBearing : _lastValidGpsHeading;
+              if (secondaryBearing == null) return const SizedBox.shrink();
+              return Opacity(
+                opacity: 0.38,
+                child: ArrowWidget(
+                    bearingDeg: secondaryBearing,
+                    color: Colors.white,
+                    size: 80),
+              );
+            },
+          ),
+          // Primary arrow
           ArrowWidget(bearingDeg: primary, color: color, size: 80),
         ]),
       ),
@@ -337,12 +357,13 @@ class _HomeScreenState extends State<HomeScreen>
                 fontSize: 64, fontWeight: FontWeight.w900, color: color, height: 1.0)),
         Text(speedStr,
             style: const TextStyle(
-                fontSize: 17,
-                color: Color(0xFF555555),
+                fontSize: 22,
+                fontWeight: FontWeight.w600,
+                color: Color(0xFF909090),
                 fontFeatures: [FontFeature.tabularFigures()])),
         Text(_sourceLabel,
             style: const TextStyle(
-                fontSize: 12, color: Color(0xFF3A3A3A), letterSpacing: 2.5)),
+                fontSize: 12, color: Color(0xFF686868), letterSpacing: 2.5)),
       ]),
     ]);
   }
