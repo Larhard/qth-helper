@@ -285,26 +285,130 @@ Color get _headingColor => _usingGps ? const Color(0xFF69F0AE) : Colors.white;
 
   Widget _buildMain() {
     final pos = _position!;
+    final isLandscape = MediaQuery.of(context).orientation == Orientation.landscape;
     return Scaffold(
       backgroundColor: Colors.black,
       body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(24, 20, 24, 16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _headingSection(pos),
-              _divider(),
-              _coordsSection(pos),
-              _divider(),
-              if (_nearestCity != null) _citySection(_nearestCity!),
-              const Spacer(),
-              _mobSection(pos),
-              const SizedBox(height: 4),
-            ],
-          ),
+        child: isLandscape ? _buildLandscape(pos) : _buildPortrait(pos),
+      ),
+    );
+  }
+
+  Widget _buildPortrait(Position pos) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24, 20, 24, 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _headingSection(pos),
+          _divider(),
+          _coordsSection(pos),
+          _divider(),
+          if (_nearestCity != null) _citySection(_nearestCity!),
+          const Spacer(),
+          _mobSection(pos),
+          const SizedBox(height: 4),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildLandscape(Position pos) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      // IntrinsicHeight lets the vertical divider stretch to match the taller column.
+      child: IntrinsicHeight(
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // Left column: heading arrow + degrees + speed + source, stacked vertically
+            // so it fits the reduced landscape height without wrapping.
+            SizedBox(
+              width: 140,
+              child: _headingSectionLandscape(pos),
+            ),
+            const SizedBox(width: 20),
+            Container(width: 1, color: const Color(0xFF1A1A1A)),
+            const SizedBox(width: 20),
+            // Right column: coordinates, city, MOB — scrollable in case of overflow.
+            Expanded(
+              child: SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _coordsSection(pos),
+                    if (_nearestCity != null) ...[
+                      _divider(),
+                      _citySection(_nearestCity!),
+                    ],
+                    _divider(),
+                    _mobSection(pos),
+                    const SizedBox(height: 4),
+                  ],
+                ),
+              ),
+            ),
+          ],
         ),
       ),
+    );
+  }
+
+  // Compact vertical variant of the heading section for landscape mode.
+  Widget _headingSectionLandscape(Position pos) {
+    final color = _headingColor;
+    final primary = _heading;
+    final speedKmh = pos.speed * 3.6;
+    final speedStr = speedKmh < 0.5
+        ? '0.0 km/h'
+        : speedKmh < 10
+            ? '${speedKmh.toStringAsFixed(1)} km/h'
+            : '${speedKmh.round()} km/h';
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        SizedBox(
+          width: 80,
+          height: 80,
+          child: Stack(alignment: Alignment.center, children: [
+            ValueListenableBuilder<double>(
+              valueListenable: _compassNotifier,
+              builder: (_, compassBearing, __) {
+                final secondaryBearing =
+                    _usingGps ? compassBearing : _lastValidGpsHeading;
+                if (secondaryBearing == null) return const SizedBox.shrink();
+                return Opacity(
+                  opacity: 0.38,
+                  child: ArrowWidget(
+                      bearingDeg: secondaryBearing,
+                      color: Colors.white,
+                      size: 80),
+                );
+              },
+            ),
+            ArrowWidget(bearingDeg: primary, color: color, size: 80),
+          ]),
+        ),
+        const SizedBox(height: 4),
+        Text('${primary.round()}°',
+            style: TextStyle(
+                fontSize: 52,
+                fontWeight: FontWeight.w900,
+                color: color,
+                height: 1.0)),
+        const SizedBox(height: 2),
+        Text(speedStr,
+            style: const TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w600,
+                color: Color(0xFF909090),
+                fontFeatures: [FontFeature.tabularFigures()])),
+        Text(_sourceLabel,
+            style: const TextStyle(
+                fontSize: 11, color: Color(0xFF686868), letterSpacing: 2.0)),
+      ],
     );
   }
 
