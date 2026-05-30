@@ -41,14 +41,30 @@ class CityService {
   Future<void> load() async {
     if (loaded) return;
     try {
-      _largeGrid    = _buildGrid(await _parseTsv('assets/cities.tsv'));
-      _preciseGrid  = _buildGrid(await _parseTsv('assets/cities_precise.tsv'));
-      _detailedGrid = _buildGrid(await _parseTsv('assets/cities_detailed.tsv'));
+      _largeGrid = _buildGrid(await _parseTsv('assets/cities.tsv'));
       loaded = true;
+      // Load larger datasets in background — ready before the user first taps.
+      _loadPrecise();
+      _loadDetailed();
     } catch (_) {
-      // Asset missing — city section stays hidden.
       loaded = false;
     }
+  }
+
+  Future<void> _loadPrecise() async {
+    try {
+      if (_preciseGrid.isEmpty) {
+        _preciseGrid = _buildGrid(await _parseTsv('assets/cities_precise.tsv'));
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _loadDetailed() async {
+    try {
+      if (_detailedGrid.isEmpty) {
+        _detailedGrid = _buildGrid(await _parseTsv('assets/cities_detailed.tsv'));
+      }
+    } catch (_) {}
   }
 
   static Future<List<City>> _parseTsv(String asset) async {
@@ -91,10 +107,15 @@ class CityService {
   // ── Lookup ─────────────────────────────────────────────────────────────────
 
   NearestCity? nearest(double lat, double lon) {
+    // Fall back to a coarser grid if the requested one isn't loaded yet.
     final grid = switch (_mode) {
       CityMode.large    => _largeGrid,
-      CityMode.precise  => _preciseGrid,
-      CityMode.detailed => _detailedGrid,
+      CityMode.precise  => _preciseGrid.isNotEmpty ? _preciseGrid : _largeGrid,
+      CityMode.detailed => _detailedGrid.isNotEmpty
+          ? _detailedGrid
+          : _preciseGrid.isNotEmpty
+              ? _preciseGrid
+              : _largeGrid,
     };
     if (grid.isEmpty) return null;
     return _nearestInGrid(grid, lat, lon);
