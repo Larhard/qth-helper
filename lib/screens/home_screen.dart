@@ -143,13 +143,23 @@ class _HomeScreenState extends State<HomeScreen>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached) {
+      // Screen off → release every continuously-running power draw:
+      //  • compass sensor (paused)
+      //  • GNSS receiver (stream cancelled — the big saving on long hikes)
+      //  • 1 Hz stale timer (cancelled — no point waking the CPU for hidden UI)
       _compassSub?.pause();
+      _posSub?.cancel();
+      _posSub = null;
+      _staleTimer?.cancel();
+      _staleTimer = null;
       _cancelClear();
     } else if (state == AppLifecycleState.resumed) {
       _compassSub?.resume();
-      // GPS may have been throttled while the screen was off.
+      // Restart everything that was torn down on pause.
+      _staleTimer ??= Timer.periodic(const Duration(seconds: 1), _onStaleTick);
+      if (_posSub == null) _startPositionStream();
       // Request one immediate fix so the stale indicator clears within seconds
-      // rather than waiting for the next stream event.
+      // rather than waiting for the freshly-restarted stream's first event.
       _requestImmediateGpsFix();
     }
   }
@@ -201,6 +211,28 @@ class _HomeScreenState extends State<HomeScreen>
       return;
     }
 
+    _startPositionStream();
+
+    _compassSub = FlutterCompass.events?.listen((e) {
+      final h = e.heading;
+      if (h == null) return;
+      final now = DateTime.now().millisecondsSinceEpoch;
+      if (now - _lastCompassMs < _compassIntervalMs) return;
+      _lastCompassMs = now;
+      final corrected =
+          (h + DeclinationService.instance.declination + 360) % 360;
+      _compassHeading = corrected;
+      _compassNotifier.value = corrected;
+      if (!_compassReceived) _compassReceived = true;
+      if (!_usingGps && mounted) setState(() {});
+    });
+  }
+
+  // The position stream is cancelled when the screen turns off (see lifecycle
+  // handler) and recreated here on resume, so the GNSS receiver isn't draining
+  // power during long screen-off stretches on a hike.
+  void _startPositionStream() {
+    _posSub?.cancel();
     _posSub = Geolocator.getPositionStream(
       locationSettings: const LocationSettings(
         accuracy: LocationAccuracy.high,
@@ -251,20 +283,6 @@ class _HomeScreenState extends State<HomeScreen>
       } else {
         if (mounted) setState(() => _position = pos);
       }
-    });
-
-    _compassSub = FlutterCompass.events?.listen((e) {
-      final h = e.heading;
-      if (h == null) return;
-      final now = DateTime.now().millisecondsSinceEpoch;
-      if (now - _lastCompassMs < _compassIntervalMs) return;
-      _lastCompassMs = now;
-      final corrected =
-          (h + DeclinationService.instance.declination + 360) % 360;
-      _compassHeading = corrected;
-      _compassNotifier.value = corrected;
-      if (!_compassReceived) _compassReceived = true;
-      if (!_usingGps && mounted) setState(() {});
     });
   }
 
