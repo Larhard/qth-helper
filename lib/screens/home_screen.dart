@@ -553,9 +553,11 @@ class _HomeScreenState extends State<HomeScreen>
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // ── Left: navigation data ─────────────────────────────────────
-          SizedBox(
-            width: 252,
+          // ── Left: navigation data (40 % of available width) ──────────
+          // Flexible flex values scale proportionally on any screen size.
+          Flexible(
+            flex: 4,
+            fit: FlexFit.tight,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
@@ -567,8 +569,10 @@ class _HomeScreenState extends State<HomeScreen>
             ),
           ),
           const SizedBox(width: 12),
-          // ── Right: city at top, MOB pinned to bottom ──────────────────
-          Expanded(
+          // ── Right: city at top, MOB pinned to bottom (60 % width) ────
+          Flexible(
+            flex: 6,
+            fit: FlexFit.tight,
             child: Container(
               decoration: const BoxDecoration(
                 border: Border(
@@ -647,18 +651,18 @@ class _HomeScreenState extends State<HomeScreen>
             style: const TextStyle(
                 fontSize: 22,
                 fontWeight: FontWeight.w600,
-                color: Color(0xFF909090),
+                color: Color(0xFFAAAAAA),
                 fontFeatures: [FontFeature.tabularFigures()]),
           ),
         ),
         Text(_sourceLabel,
             style: const TextStyle(
-                fontSize: 12, color: Color(0xFF8A8A8A), letterSpacing: 2.5)),
+                fontSize: 12, color: Color(0xFFAAAAAA), letterSpacing: 2.5)),
         Text(
           _trackBearing != null ? 'TRK ${_trackBearing!.round()}°' : 'TRK ---',
           style: const TextStyle(
               fontSize: 12,
-              color: Color(0xFF686868),
+              color: Color(0xFF999999),
               letterSpacing: 1.5),
         ),
       ]),
@@ -721,17 +725,17 @@ class _HomeScreenState extends State<HomeScreen>
                 style: const TextStyle(
                     fontSize: 18,
                     fontWeight: FontWeight.w600,
-                    color: Color(0xFF909090),
+                    color: Color(0xFFAAAAAA),
                     fontFeatures: [FontFeature.tabularFigures()]),
               ),
             ),
             Text(_sourceLabel,
                 style: const TextStyle(
-                    fontSize: 12, color: Color(0xFF8A8A8A), letterSpacing: 2.5)),
+                    fontSize: 12, color: Color(0xFFAAAAAA), letterSpacing: 2.5)),
             Text(
               _trackBearing != null ? 'TRK ${_trackBearing!.round()}°' : 'TRK ---',
               style: const TextStyle(
-                  fontSize: 12, color: Color(0xFF686868), letterSpacing: 1.5),
+                  fontSize: 12, color: Color(0xFF999999), letterSpacing: 1.5),
             ),
           ],
         ),
@@ -841,13 +845,13 @@ class _HomeScreenState extends State<HomeScreen>
       Text('alt $altStr',
           style: const TextStyle(
               fontSize: 12,
-              color: Color(0xFF888888),
+              color: Color(0xFF999999),
               fontFeatures: [FontFeature.tabularFigures()])),
       const SizedBox(width: 12),
       Text('$accStr$staleStr',
           style: TextStyle(
               fontSize: 12,
-              color: stale ? const Color(0xFFFF7043) : const Color(0xFF777777),
+              color: stale ? const Color(0xFFFF7043) : const Color(0xFF888888),
               fontFeatures: const [FontFeature.tabularFigures()])),
     ]);
   }
@@ -896,8 +900,10 @@ class _HomeScreenState extends State<HomeScreen>
       child: Row(children: [
         ArrowWidget(bearingDeg: nc.bearingDeg, color: color, size: 60),
         const SizedBox(width: 16),
-        Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Expanded(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text(nc.city.name,
+              overflow: TextOverflow.ellipsis,
               style: TextStyle(
                   fontSize: 30, fontWeight: FontWeight.w700, color: color)),
           Row(children: [
@@ -921,6 +927,7 @@ class _HomeScreenState extends State<HomeScreen>
                     fontFeatures: const [FontFeature.tabularFigures()])),
           ]),
         ]),
+        ),   // Expanded
       ]),
     );
   }
@@ -1080,19 +1087,19 @@ class _HomeScreenState extends State<HomeScreen>
               Text(formatLatF(wp.lat, _coordFormat),
                   style: TextStyle(
                       fontSize: coordFontSize,
-                      color: const Color(0xFFAA4444),
+                      color: const Color(0xFFCC2222),
                       fontFeatures: const [FontFeature.tabularFigures()])),
               Text(formatLonF(wp.lon, _coordFormat),
                   style: TextStyle(
                       fontSize: coordFontSize,
-                      color: const Color(0xFFAA4444),
+                      color: const Color(0xFFCC2222),
                       fontFeatures: const [FontFeature.tabularFigures()])),
               const SizedBox(height: 2),
               Text(
                 _locStr(wp.lat, wp.lon),
                 style: TextStyle(
                     fontSize: portrait ? 13.0 : 13.0,
-                    color: const Color(0xFFAA4444),
+                    color: const Color(0xFFCC2222),
                     fontFeatures: const [FontFeature.tabularFigures()]),
               ),
               SizedBox(height: portrait ? 6 : 4),
