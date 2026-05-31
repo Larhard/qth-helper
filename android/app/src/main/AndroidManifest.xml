@@ -5,6 +5,10 @@
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <!-- Keeps CPU on while app is in foreground (compass + GPS need continuous updates) -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Required for geolocator's foreground service (GPS in LIVE/lock-screen mode) -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <!-- Required on Android 14+ (API 34+) for location-type foreground services -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
 
     <application
         android:label="QTH Dashboard"

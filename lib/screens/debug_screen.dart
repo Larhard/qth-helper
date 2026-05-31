@@ -139,13 +139,13 @@ class _DebugScreenState extends State<DebugScreen> {
           title: const Text('Debug',
               style: TextStyle(
                   fontSize: 15,
-                  color: Color(0xFF555555),
+                  color: Color(0xFF888888),
                   letterSpacing: 3,
                   fontWeight: FontWeight.w400)),
           bottom: const TabBar(
-            labelColor: Color(0xFF999999),
-            unselectedLabelColor: Color(0xFF444444),
-            indicatorColor: Color(0xFF555555),
+            labelColor: Color(0xFFCCCCCC),
+            unselectedLabelColor: Color(0xFF666666),
+            indicatorColor: Color(0xFF888888),
             labelStyle: TextStyle(fontSize: 12, letterSpacing: 1.5),
             tabs: [
               Tab(text: 'GPS'),
@@ -170,7 +170,7 @@ class _DebugScreenState extends State<DebugScreen> {
         child: Text(title.toUpperCase(),
             style: const TextStyle(
                 fontSize: 10,
-                color: Color(0xFF555555),
+                color: Color(0xFF888888),
                 letterSpacing: 2.5,
                 fontWeight: FontWeight.w700)),
       );
@@ -184,7 +184,7 @@ class _DebugScreenState extends State<DebugScreen> {
         textAlign: TextAlign.right,
         style: TextStyle(
             fontSize: 12,
-            color: vc ?? const Color(0xFFCCCCCC),
+            color: vc ?? Colors.white,
             fontFeatures:
                 mono ? const [FontFeature.tabularFigures()] : null));
     return InkWell(
@@ -197,7 +197,7 @@ class _DebugScreenState extends State<DebugScreen> {
           children: [
             Text(label,
                 style:
-                    const TextStyle(fontSize: 12, color: Color(0xFF666666))),
+                    const TextStyle(fontSize: 12, color: Color(0xFF999999))),
             const SizedBox(width: 16),
             Flexible(child: text),
           ],
@@ -258,7 +258,7 @@ class _DebugScreenState extends State<DebugScreen> {
         _divider(),
         if (_satTotal < 0)
           _row('GNSS data', 'Awaiting…',
-              vc: const Color(0xFF555555))
+              vc: const Color(0xFF888888))
         else ...[
           _row('Total visible', '$_satTotal'),
           _row('Used in fix', '$_satUsed',

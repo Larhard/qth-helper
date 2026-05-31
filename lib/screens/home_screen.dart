@@ -102,8 +102,8 @@ class _HomeScreenState extends State<HomeScreen>
   bool _toggling = false;
   double _toggleProgress = 0.0;
 
-  static const _saveModeColor = Color(0xFF9E7000);  // dark amber — "limited"
-  static const _liveModeColor = Color(0xFF00838F);  // dark cyan  — "active"
+  static const _saveModeColor = Color(0xFFFFAB40);  // amber — GPS pauses at lock
+  static const _liveModeColor = Color(0xFF26C6DA);  // cyan  — GPS on at lock
 
   // ── Derived ───────────────────────────────────────────────────────────────
   bool get _usingGps {
@@ -168,18 +168,21 @@ class _HomeScreenState extends State<HomeScreen>
       _staleTimer = null;
       _cancelClear();
       _cancelToggle();
-      // GPS stream: keep alive in LIVE mode so TRK stays current during lock.
-      if (!_gpsOnLock) {
+      if (_gpsOnLock) {
+        // Switch to a foreground-service-backed stream. Android throttles GPS
+        // for background apps without a foreground service (API 26+); keeping
+        // the plain stream subscription alive does not prevent this.
+        _startPositionStreamBackground();
+      } else {
         _posSub?.cancel();
         _posSub = null;
       }
     } else if (state == AppLifecycleState.resumed) {
       _compassSub?.resume();
-      // Restart everything that was torn down on pause.
       _staleTimer ??= Timer.periodic(const Duration(seconds: 1), _onStaleTick);
-      if (_posSub == null) _startPositionStream();
-      // Request one immediate fix so the stale indicator clears within seconds
-      // rather than waiting for the freshly-restarted stream's first event.
+      // Always restart the normal (no notification) stream on resume, whether
+      // coming from SAVE (null sub) or LIVE (background foreground-service sub).
+      _startPositionStream();
       _requestImmediateGpsFix();
     }
   }
@@ -248,6 +251,42 @@ class _HomeScreenState extends State<HomeScreen>
   // The position stream is cancelled when the screen turns off (see lifecycle
   // handler) and recreated here on resume, so the GNSS receiver isn't draining
   // power during long screen-off stretches on a hike.
+  // Shared handler — called from both normal and background streams.
+  void _onPositionUpdate(Position pos) {
+    _lastGpsFix = DateTime.now();
+    if (_gpsStaleSeconds > 0) _gpsStaleSeconds = 0;
+
+    _cachedLatStr = formatLatF(pos.latitude, _coordFormat);
+    _cachedLonStr = formatLonF(pos.longitude, _coordFormat);
+    _cachedLocStr = _locStr(pos.latitude, pos.longitude);
+    _cachedAlt = pos.altitude;
+    _cachedAccuracy = pos.accuracy;
+    _gpsClockOffset = pos.timestamp.difference(DateTime.now());
+
+    // GPS course is usable above ~0.5 m/s; cache at lower threshold so the
+    // secondary arrow appears even at walking pace.
+    if (pos.speed >= 0.5 && !pos.heading.isNaN && pos.heading >= 0) {
+      _lastValidGpsHeading = pos.heading;
+    }
+
+    _updateTrackBearing(pos);
+    DeclinationService.instance.update(pos.latitude, pos.longitude, pos.altitude);
+
+    final needsCity = _lastCityCalcPos == null ||
+        Geolocator.distanceBetween(
+              _lastCityCalcPos!.latitude, _lastCityCalcPos!.longitude,
+              pos.latitude, pos.longitude,
+            ) >= _cityRecalcThresholdM;
+
+    if (needsCity) {
+      _lastCityCalcPos = pos;
+      final city = CityService.instance.nearest(pos.latitude, pos.longitude);
+      if (mounted) setState(() { _position = pos; _nearestCity = city; });
+    } else {
+      if (mounted) setState(() => _position = pos);
+    }
+  }
+
   void _startPositionStream() {
     _posSub?.cancel();
     _posSub = Geolocator.getPositionStream(
@@ -255,51 +294,28 @@ class _HomeScreenState extends State<HomeScreen>
         accuracy: LocationAccuracy.high,
         distanceFilter: 2,
       ),
-    ).listen((pos) {
-      // ── Freshness ─────────────────────────────────────────────────────────
-      _lastGpsFix = DateTime.now();
-      if (_gpsStaleSeconds > 0) _gpsStaleSeconds = 0;
+    ).listen(_onPositionUpdate, onError: (_) {});
+  }
 
-      // ── Cache display strings (avoid recomputing in build) ────────────────
-      _cachedLatStr = formatLatF(pos.latitude, _coordFormat);
-      _cachedLonStr = formatLonF(pos.longitude, _coordFormat);
-      _cachedLocStr = _locStr(pos.latitude, pos.longitude);
-      _cachedAlt = pos.altitude;
-      _cachedAccuracy = pos.accuracy;
-      _gpsClockOffset = pos.timestamp.difference(DateTime.now());
-
-      // ── GPS heading ───────────────────────────────────────────────────────
-      // Primary source switches at _gpsThresholdMs (1.5 m/s). The last-known
-      // GPS heading is cached at a lower threshold so the secondary arrow
-      // appears even at walking pace — GPS course is usable above ~0.5 m/s.
-      if (pos.speed >= 0.5 && !pos.heading.isNaN && pos.heading >= 0) {
-        _lastValidGpsHeading = pos.heading;
-      }
-
-      // ── Track azimuth ─────────────────────────────────────────────────────
-      _updateTrackBearing(pos);
-
-      // ── Declination (throttled inside the service) ────────────────────────
-      DeclinationService.instance
-          .update(pos.latitude, pos.longitude, pos.altitude);
-
-      // ── City recalc ───────────────────────────────────────────────────────
-      final needsCity = _lastCityCalcPos == null ||
-          Geolocator.distanceBetween(
-                _lastCityCalcPos!.latitude, _lastCityCalcPos!.longitude,
-                pos.latitude, pos.longitude,
-              ) >=
-              _cityRecalcThresholdM;
-
-      if (needsCity) {
-        _lastCityCalcPos = pos;
-        final city =
-            CityService.instance.nearest(pos.latitude, pos.longitude);
-        if (mounted) setState(() { _position = pos; _nearestCity = city; });
-      } else {
-        if (mounted) setState(() => _position = pos);
-      }
-    });
+  // Foreground-service-backed stream for LIVE mode while the screen is off.
+  // Android silently stops GPS for background apps (API 26+) unless a
+  // foreground service is running. The persistent notification is mandatory
+  // by Android; it disappears when the screen turns on and the normal stream
+  // resumes. No extra permissions needed — foreground services with location
+  // type are exempt from ACCESS_BACKGROUND_LOCATION.
+  void _startPositionStreamBackground() {
+    _posSub?.cancel();
+    _posSub = Geolocator.getPositionStream(
+      locationSettings: AndroidSettings(
+        accuracy: LocationAccuracy.high,
+        distanceFilter: 2,
+        foregroundNotificationConfig: const ForegroundNotificationConfig(
+          notificationTitle: 'QTH Helper',
+          notificationText: 'GPS tracking active',
+          enableWakeLock: true,
+        ),
+      ),
+    ).listen(_onPositionUpdate, onError: (_) {});
   }
 
   // ── Track azimuth ─────────────────────────────────────────────────────────
@@ -870,7 +886,7 @@ class _HomeScreenState extends State<HomeScreen>
                 Text(_usingGps ? 'GPS' : 'MAG',
                     style: TextStyle(
                         fontSize: sourceFontSize,
-                        color: const Color(0xFFBBBBBB),
+                        color: const Color(0xFFDDDDDD),
                         letterSpacing: 2.5)),
                 const SizedBox(width: 6),
                 // [gps_fixed/@/lock] = GPS keeps running through lock screen.
@@ -892,7 +908,7 @@ class _HomeScreenState extends State<HomeScreen>
                   : 'TRK ---',
               style: TextStyle(
                   fontSize: trkFontSize,
-                  color: const Color(0xFFB0B0B0),
+                  color: const Color(0xFFCCCCCC),
                   letterSpacing: 1.5),
             ),
           ],
