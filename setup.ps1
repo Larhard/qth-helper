@@ -1,12 +1,18 @@
-# QTH Helper — one-time project setup
+# QTH Dashboard — one-time project setup
 # Run from the qth_helper directory: .\setup.ps1
+#
+# This script does everything needed to build and run the app.
+# Downloading full city / port datasets is intentionally NOT included here —
+# that step requires internet access, a GeoNames account, and significant
+# time.  See the README for instructions on running fetch_cities.py and
+# fetch_ports.py when you are ready.
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-Write-Host "`n=== QTH Helper Setup ===" -ForegroundColor Cyan
+Write-Host "`n=== QTH Dashboard Setup ===" -ForegroundColor Cyan
 
-# 1. Check Flutter
+# ── 1. Check Flutter ──────────────────────────────────────────────────────────
 if (-not (Get-Command flutter -ErrorAction SilentlyContinue)) {
     Write-Host @"
 
@@ -20,59 +26,26 @@ After installing, re-run this script.
 
 Write-Host "Flutter found: $(flutter --version --machine 2>$null | ConvertFrom-Json | Select-Object -ExpandProperty frameworkVersion -ErrorAction SilentlyContinue)" -ForegroundColor Green
 
-# 2. Scaffold Flutter project if not already done
-if (-not (Test-Path 'android\gradle\wrapper\gradle-wrapper.properties')) {
-    Write-Host "`nRunning flutter create to generate Android boilerplate…" -ForegroundColor Cyan
-    # --project-name must be snake_case and match pubspec.yaml name
-    flutter create --project-name qth_helper --org com.example --platforms android .
-    Write-Host "Flutter project created." -ForegroundColor Green
-
-    # Restore our AndroidManifest (flutter create overwrites it)
-    Write-Host "Restoring AndroidManifest.xml with location permissions…" -ForegroundColor Cyan
-    $manifestPath = 'android\app\src\main\AndroidManifest.xml'
-    # The file we wrote already has the correct permissions; flutter create replaced it, so re-apply
-    # Check if our permissions are present; if not, patch them in
-    $manifest = Get-Content $manifestPath -Raw
-    if ($manifest -notmatch 'ACCESS_FINE_LOCATION') {
-        $permissions = @'
-    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
-    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
-    <uses-permission android:name="android.permission.WAKE_LOCK" />
-'@
-        $manifest = $manifest -replace '(<manifest[^>]*>)', "`$1`n$permissions"
-        Set-Content $manifestPath $manifest -Encoding UTF8
-        Write-Host "Permissions patched into AndroidManifest.xml." -ForegroundColor Green
-    } else {
-        Write-Host "Permissions already present." -ForegroundColor Green
-    }
-} else {
-    Write-Host "Flutter project already initialised." -ForegroundColor Green
-}
-
-# 3. Fetch city data
-if (-not (Test-Path 'assets\cities.tsv')) {
-    Write-Host "`nFetching cities data (one-time, ~2 MB download)…" -ForegroundColor Cyan
-    python scripts\fetch_cities.py
-} else {
-    $lines = (Get-Content 'assets\cities.tsv' | Measure-Object -Line).Lines
-    Write-Host "cities.tsv already present ($($lines - 1) cities)." -ForegroundColor Green
-}
-
-# 4. Install Flutter packages
+# ── 2. Flutter packages ────────────────────────────────────────────────────────
 Write-Host "`nRunning flutter pub get…" -ForegroundColor Cyan
 flutter pub get
 
-# 5. Generate app icon
+# ── 3. Asset stubs (required before the first build, instant, no internet) ────
+Write-Host "`nCreating asset stubs…" -ForegroundColor Cyan
+python scripts\create_stubs.py
+
+# ── 4. App icon ────────────────────────────────────────────────────────────────
 Write-Host "`nGenerating app icon…" -ForegroundColor Cyan
 python scripts\generate_icon.py
 
-# 6. Stamp all Android mipmap sizes
 Write-Host "`nStamping Android launcher icons…" -ForegroundColor Cyan
-flutter pub run flutter_launcher_icons
+dart run flutter_launcher_icons
 
 Write-Host @"
 
 === Setup complete ===
+
+The app is ready to build and run.
 
 Connect your Android device (USB debugging on) or start an emulator, then:
 
@@ -83,9 +56,25 @@ To build a release APK:
     flutter build apk --release
     # Output: build\app\outputs\flutter-apk\app-release.apk
 
-To regenerate the icon after editing scripts/generate_icon.py:
+─────────────────────────────────────────────────────────────────────────────
+OPTIONAL — Download full data (requires internet access)
+─────────────────────────────────────────────────────────────────────────────
 
-    python scripts\generate_icon.py
-    flutter pub run flutter_launcher_icons
+The app works out of the box with the built-in top-5 000 city dataset.
+For finer city precision and port data, run the fetch scripts manually:
+
+  1. Full city datasets (cities_precise and cities_detailed, ~10 MB):
+
+       python scripts\fetch_cities.py
+
+  2. Port data — requires a free GeoNames account and the NGA WPI CSV.
+     See README.md → Step 3 for detailed instructions.
+
+       python scripts\fetch_ports.py --wpi-file "path\to\UpdatedPub150.csv" --user YOUR_USERNAME
+
+The generated files are gitignored; git add . will never accidentally
+commit them.
+
+─────────────────────────────────────────────────────────────────────────────
 
 "@ -ForegroundColor Cyan

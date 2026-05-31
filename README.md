@@ -124,7 +124,21 @@ flutter pub get
 
 ---
 
-### Step 2 — Download city data (required, ~10 MB)
+### Step 2 — Create asset stubs (required before first build, instant)
+
+The three large data assets are gitignored and must be created locally before
+Flutter can compile. This step takes under a second and requires no internet:
+
+```powershell
+python scripts\create_stubs.py
+```
+
+This creates header-only placeholder files. The app will start with only the
+built-in top-5 000 city dataset until the fetch scripts below are run.
+
+---
+
+### Step 3 — Download city data (optional but recommended, ~10 MB)
 
 ```powershell
 python scripts\fetch_cities.py
@@ -274,9 +288,9 @@ All features except *GPS on lock screen* work with only the first three permissi
 | Asset | In repo? | Licence | Source |
 |-------|----------|---------|--------|
 | `assets/cities.tsv` (5 000 cities) | ✅ Yes (260 KB) | CC BY 4.0 | GeoNames |
-| `assets/cities_precise.tsv` | Stub only | CC BY 4.0 | GeoNames (via `fetch_cities.py`) |
-| `assets/cities_detailed.tsv` | Stub only | CC BY 4.0 | GeoNames (via `fetch_cities.py`) |
-| `assets/ports.tsv` | Stub only | Public Domain + CC BY 4.0 + **ODbL\*** | NGA WPI + GeoNames + OSM (via `fetch_ports.py`) |
+| `assets/cities_precise.tsv` | ❌ Gitignored | CC BY 4.0 | GeoNames (via `fetch_cities.py`) |
+| `assets/cities_detailed.tsv` | ❌ Gitignored | CC BY 4.0 | GeoNames (via `fetch_cities.py`) |
+| `assets/ports.tsv` | ❌ Gitignored | Public Domain + CC BY 4.0 + **ODbL\*** | NGA WPI + GeoNames + OSM (via `fetch_ports.py`) |
 | `data/UpdatedPub150.csv` | ❌ No | US Govt public domain | [NGA WPI](https://msi.nga.mil/Publications/WPI) |
 | Source code | ✅ Yes | MIT | This project |
 | App icon | ✅ Yes | MIT | This project |
@@ -296,22 +310,8 @@ Port data: NGA World Port Index (public domain)
 
 ### After running the setup scripts
 
-The generated TSV files overwrite the committed stubs.  To prevent git from
-staging multi-megabyte data files accidentally, mark them as skip-worktree:
-
-```powershell
-git update-index --skip-worktree `
-    assets/cities_precise.tsv `
-    assets/cities_detailed.tsv `
-    assets/ports.tsv
-```
-
-To undo (e.g. to commit a newly regenerated stub after updating the schema):
-
-```powershell
-git update-index --no-skip-worktree assets/cities_precise.tsv
-git checkout -- assets/cities_precise.tsv   # restore stub
-```
+The generated TSV files are listed in `.gitignore` so they can never be
+accidentally staged with `git add .` — no `git update-index` call required.
 
 ---
 
