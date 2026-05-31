@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:geolocator/geolocator.dart';
@@ -29,6 +30,20 @@ class WaypointsScreen extends StatefulWidget {
 }
 
 class _WaypointsScreenState extends State<WaypointsScreen> {
+  Timer? _ticker;
+
+  @override
+  void initState() {
+    super.initState();
+    _ticker = Timer.periodic(const Duration(seconds: 1), (_) => setState(() {}));
+  }
+
+  @override
+  void dispose() {
+    _ticker?.cancel();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
     final wpts = WaypointService.instance.waypoints;
@@ -105,8 +120,18 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
       subtitle: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(_fmtTimestamp(wp.timestamp, widget.timeUtc),
-              style: const TextStyle(color: Colors.white38, fontSize: 11)),
+          Row(children: [
+            Text(_fmtTimestamp(wp.timestamp, widget.timeUtc),
+                style: const TextStyle(color: Colors.white38, fontSize: 11)),
+            const SizedBox(width: 8),
+            Text(
+              formatElapsed(DateTime.now().difference(wp.timestamp)),
+              style: const TextStyle(
+                  color: Color(0xFF888888),
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600),
+            ),
+          ]),
           const SizedBox(height: 2),
           Text('$latStr   $lonStr',
               style: const TextStyle(

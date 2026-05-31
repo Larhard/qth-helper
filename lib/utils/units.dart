@@ -63,6 +63,29 @@ String speedUnitLabel(SpeedUnit unit) {
   }
 }
 
+/// Human-readable elapsed duration, two levels of granularity:
+///   < 60 s   → "42s"
+///   < 60 min → "5m 30s"   (seconds component omitted when zero)
+///   < 24 h   → "3h 15m"   (minutes component omitted when zero)
+///   1 d +    → "2d 11h"   (hours component omitted when zero)
+String formatElapsed(Duration d) {
+  final s = d.inSeconds.abs();
+  if (s < 60) return '${s}s';
+  final m = d.inMinutes.abs();
+  if (m < 60) {
+    final remS = s % 60;
+    return remS > 0 ? '${m}m ${remS}s' : '${m}m';
+  }
+  final h = d.inHours.abs();
+  if (h < 24) {
+    final remM = m % 60;
+    return remM > 0 ? '${h}h ${remM}m' : '${h}h';
+  }
+  final days = d.inDays.abs();
+  final remH = h % 24;
+  return remH > 0 ? '${days}d ${remH}h' : '${days}d';
+}
+
 const _timeUtcKey = 'time_utc';
 bool loadTimeUtc() => GetStorage().read<bool>(_timeUtcKey) ?? true;
 void saveTimeUtc(bool v) => GetStorage().write(_timeUtcKey, v);

@@ -1178,70 +1178,91 @@ class _HomeScreenState extends State<HomeScreen>
         painter: _WptBorderPainter(_clearProgress),
         child: Padding(
           padding: padding,
-          child: Column(
+          child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Row(children: [
-                ArrowWidget(
-                    bearingDeg: b,
-                    color: const Color(0xFFFF3333),
-                    size: arrowSize),
-                const SizedBox(width: 14),
-                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text(wp.name,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                          fontSize: nameFontSize,
-                          fontWeight: FontWeight.w900,
-                          color: const Color(0xFFFF3333),
-                          letterSpacing: 1.5)),
-                  Row(children: [
-                    Text('${b.round()}°',
+              ArrowWidget(
+                  bearingDeg: b,
+                  color: const Color(0xFFFF3333),
+                  size: arrowSize),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Name (left) + elapsed time (right) on the same row.
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      crossAxisAlignment: CrossAxisAlignment.baseline,
+                      textBaseline: TextBaseline.alphabetic,
+                      children: [
+                        Flexible(
+                          child: Text(wp.name,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                  fontSize: nameFontSize,
+                                  fontWeight: FontWeight.w900,
+                                  color: const Color(0xFFFF3333),
+                                  letterSpacing: 1.5)),
+                        ),
+                        Text(
+                          formatElapsed(
+                              DateTime.now().difference(wp.timestamp)),
+                          style: const TextStyle(
+                              fontSize: 12,
+                              color: Color(0xFF883333),
+                              fontFeatures: [FontFeature.tabularFigures()]),
+                        ),
+                      ],
+                    ),
+                    Row(children: [
+                      Text('${b.round()}°',
+                          style: TextStyle(
+                              fontSize: dataFontSize,
+                              color: const Color(0xFFFF2020),
+                              fontFeatures: const [
+                                FontFeature.tabularFigures()
+                              ])),
+                      const SizedBox(width: 14),
+                      Text(formatDistanceUnit(d, _speedUnit),
+                          style: TextStyle(
+                              fontSize: dataFontSize,
+                              color: const Color(0xFFFF3333),
+                              fontWeight: FontWeight.w600,
+                              fontFeatures: const [
+                                FontFeature.tabularFigures()
+                              ])),
+                    ]),
+                    SizedBox(height: portrait ? 6 : 4),
+                    Text(formatLatF(wp.lat, _coordFormat),
                         style: TextStyle(
-                            fontSize: dataFontSize,
-                            color: const Color(0xFFFF2020),
-                            fontFeatures: const [
-                              FontFeature.tabularFigures()
-                            ])),
-                    const SizedBox(width: 14),
-                    Text(formatDistanceUnit(d, _speedUnit),
+                            fontSize: coordFontSize,
+                            color: const Color(0xFFCC2222),
+                            fontFeatures: const [FontFeature.tabularFigures()])),
+                    Text(formatLonF(wp.lon, _coordFormat),
                         style: TextStyle(
-                            fontSize: dataFontSize,
-                            color: const Color(0xFFFF3333),
-                            fontWeight: FontWeight.w600,
-                            fontFeatures: const [
-                              FontFeature.tabularFigures()
-                            ])),
-                  ]),
-                ]),
-              ]),
-              SizedBox(height: portrait ? 6 : 4),
-              Text(formatLatF(wp.lat, _coordFormat),
-                  style: TextStyle(
-                      fontSize: coordFontSize,
-                      color: const Color(0xFFCC2222),
-                      fontFeatures: const [FontFeature.tabularFigures()])),
-              Text(formatLonF(wp.lon, _coordFormat),
-                  style: TextStyle(
-                      fontSize: coordFontSize,
-                      color: const Color(0xFFCC2222),
-                      fontFeatures: const [FontFeature.tabularFigures()])),
-              const SizedBox(height: 2),
-              Text(
-                _locStr(wp.lat, wp.lon),
-                style: TextStyle(
-                    fontSize: portrait ? 13.0 : 13.0,
-                    color: const Color(0xFFCC2222),
-                    fontFeatures: const [FontFeature.tabularFigures()]),
-              ),
-              SizedBox(height: portrait ? 6 : 4),
-              const Align(
-                alignment: Alignment.centerRight,
-                child: Text('HOLD 3s TO DEACTIVATE',
-                    style: TextStyle(
-                        fontSize: 10,
-                        color: Color(0xFF4A1A1A),
-                        letterSpacing: 1.5)),
+                            fontSize: coordFontSize,
+                            color: const Color(0xFFCC2222),
+                            fontFeatures: const [FontFeature.tabularFigures()])),
+                    const SizedBox(height: 2),
+                    Text(
+                      _locStr(wp.lat, wp.lon),
+                      style: const TextStyle(
+                          fontSize: 13,
+                          color: Color(0xFFCC2222),
+                          fontFeatures: [FontFeature.tabularFigures()]),
+                    ),
+                    SizedBox(height: portrait ? 6 : 4),
+                    const Align(
+                      alignment: Alignment.centerRight,
+                      child: Text('HOLD 3s TO DEACTIVATE',
+                          style: TextStyle(
+                              fontSize: 10,
+                              color: Color(0xFF4A1A1A),
+                              letterSpacing: 1.5)),
+                    ),
+                  ],
+                ),
               ),
             ],
           ),
