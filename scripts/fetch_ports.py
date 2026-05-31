@@ -704,32 +704,89 @@ def _overpass_query(country_iso: str) -> str:
     )
 
 
-def _overpass(query: str, *, timeout: int = 180) -> bytes | None:
-    """POST a query to the Overpass API and return the raw response bytes."""
+def _overpass(query: str, *, timeout: int = 180, max_retries: int = 4) -> bytes | None:
+    """POST a query to the Overpass API with exponential back-off on 429 / 504.
+
+    Overpass public instances enforce rate limits (429 Too Many Requests) and
+    occasionally time out upstream (504 Gateway Timeout).  These are transient
+    and retrying after a delay almost always succeeds.
+
+    Non-transient errors (4xx except 429, 400 Bad Request, etc.) are returned
+    immediately as None without retrying.
+    """
     data = urllib.parse.urlencode({"data": query}).encode()
-    req = urllib.request.Request(
-        OVERPASS_API, data=data,
-        headers={
-            "Content-Type": "application/x-www-form-urlencoded",
-            "Accept":       "application/json",
-            "User-Agent":   "QTH-Dashboard-fetch-ports/1.0 (recreational navigation app)",
-        },
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return resp.read()
-    except urllib.error.HTTPError as e:
-        # Try to read the error body — Overpass often puts a helpful message there
-        body = ""
+    headers = {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Accept":       "application/json",
+        "User-Agent":   "QTH-Dashboard-fetch-ports/1.0 (recreational navigation app)",
+    }
+
+    delay = 15  # initial backoff in seconds; doubles on each retry
+    for attempt in range(max_retries + 1):
+        req = urllib.request.Request(OVERPASS_API, data=data, headers=headers)
         try:
-            body = e.read().decode("utf-8", errors="replace")[:300]
-        except Exception:
-            pass
-        print(f"  Overpass HTTP {e.code} {e.reason}. {body}", file=sys.stderr)
-        return None
-    except Exception as e:
-        print(f"  Overpass error: {e}", file=sys.stderr)
-        return None
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return resp.read()
+
+        except urllib.error.HTTPError as e:
+            body = ""
+            try:
+                body = e.read().decode("utf-8", errors="replace")[:300]
+            except Exception:
+                pass
+
+            if e.code in (429, 503):
+                # Rate-limited.  Respect the Retry-After header if present.
+                retry_after = int(e.headers.get("Retry-After", delay))
+                wait = max(delay, retry_after)
+                if attempt < max_retries:
+                    sys.stderr.write(
+                        f"\n  Overpass HTTP {e.code} (rate limit). "
+                        f"Waiting {wait}s before retry {attempt + 1}/{max_retries}…\n"
+                    )
+                    sys.stderr.flush()
+                    time.sleep(wait)
+                    delay = min(delay * 2, 120)
+                else:
+                    print(f"  Overpass HTTP {e.code}: max retries reached. {body}",
+                          file=sys.stderr)
+                    return None
+
+            elif e.code in (504, 502, 500):
+                # Gateway / server error — transient, worth retrying.
+                if attempt < max_retries:
+                    sys.stderr.write(
+                        f"\n  Overpass HTTP {e.code} (timeout/server error). "
+                        f"Waiting {delay}s before retry {attempt + 1}/{max_retries}…\n"
+                    )
+                    sys.stderr.flush()
+                    time.sleep(delay)
+                    delay = min(delay * 2, 120)
+                else:
+                    print(f"  Overpass HTTP {e.code}: max retries reached. {body}",
+                          file=sys.stderr)
+                    return None
+
+            else:
+                # 400 Bad Request, 401, 403, etc. — not transient, don't retry.
+                print(f"  Overpass HTTP {e.code} {e.reason}. {body}", file=sys.stderr)
+                return None
+
+        except Exception as e:
+            # Could be a socket timeout or DNS failure — usually transient.
+            if attempt < max_retries:
+                sys.stderr.write(
+                    f"\n  Overpass error: {e}. "
+                    f"Waiting {delay}s before retry {attempt + 1}/{max_retries}…\n"
+                )
+                sys.stderr.flush()
+                time.sleep(delay)
+                delay = min(delay * 2, 120)
+            else:
+                print(f"  Overpass error: {e} (max retries reached).", file=sys.stderr)
+                return None
+
+    return None  # unreachable, satisfies type checker
 
 
 def _osm_vhf(tags: dict) -> str:
@@ -815,7 +872,7 @@ def fetch_osm(countries: list[str], cache: dict) -> None:
 
         cache[cache_key] = {"done": True, "rows": rows}
         _cache_save(cache)
-        time.sleep(1.0)  # be polite to the Overpass server
+        time.sleep(2.0)  # be polite; the retries in _overpass handle the rare 429
 
     if prog:
         total_rows = sum(len(v["rows"]) for k, v in cache.items()

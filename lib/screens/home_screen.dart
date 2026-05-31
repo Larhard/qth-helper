@@ -1283,13 +1283,11 @@ class _HomeScreenState extends State<HomeScreen>
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           // FittedBox scales the name down when it's too wide instead of
           // cutting it off — short names stay at full 32 sp.
-          FittedBox(
-            fit: BoxFit.scaleDown,
-            alignment: Alignment.centerLeft,
-            child: Text(nc.city.name,
-                style: TextStyle(
-                    fontSize: 32, fontWeight: FontWeight.w700, color: color)),
-          ),
+          Text(nc.city.name,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                  fontSize: 32, fontWeight: FontWeight.w700, color: color)),
           Row(children: [
             Text('${nc.bearingDeg.round()}°',
                 style: TextStyle(
@@ -1350,13 +1348,11 @@ class _HomeScreenState extends State<HomeScreen>
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Row(children: [
               Flexible(
-                child: FittedBox(
-                  fit: BoxFit.scaleDown,
-                  alignment: Alignment.centerLeft,
-                  child: Text(nc.city.name,
-                      style: TextStyle(
-                          fontSize: 28, fontWeight: FontWeight.w700, color: color)),
-                ),
+                child: Text(nc.city.name,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                        fontSize: 28, fontWeight: FontWeight.w700, color: color)),
               ),
               const SizedBox(width: 8),
               Text(nc.city.country,
