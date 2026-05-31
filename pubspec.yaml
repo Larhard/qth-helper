@@ -9,10 +9,10 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  geolocator: ^13.0.0
+  geolocator: ^14.0.2
   flutter_compass: ^0.8.0
   get_storage: ^2.1.1   # pure Dart, no Android plugin → no KGP issues
-  url_launcher: ^6.0.0  # open links in the city/port detail sheet
+  url_launcher: ^6.3.2  # open links in the city/port detail sheet
 
 dev_dependencies:
   flutter_launcher_icons: ^0.14.1
