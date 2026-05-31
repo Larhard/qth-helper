@@ -146,28 +146,34 @@ Each TSV includes: `name`, `country`, `lat`, `lon`, `population`, `timezone`.
 
 The port database is sourced from two places:
 
-**NGA World Port Index (WPI)** — downloaded automatically, no account needed.
-~4 000 commercial ports worldwide with harbour size, VHF working channel, and radio call sign.
+**NGA World Port Index (WPI)** — ~3 800 commercial ports with harbour size, VHF working channel, and radio call sign.
+The NGA server blocks automated downloads, so this file must be saved manually:
+
+1. Open <https://msi.nga.mil/Publications/WPI> in a browser
+2. Under **Download Publication**, click **Complete Volume** — saves `UpdatedPub150.csv` (~3 800 rows)  
+   ⚠️ Do **not** choose the PDF, MS Access, or Shapefile options — those are archived 2019 editions and will not parse
+3. Save `UpdatedPub150.csv` anywhere on your computer
 
 **GeoNames supplement** — covers marinas, small harbours, and anchorages not in the WPI.
-Requires a **free GeoNames account** for meaningful coverage.
+Requires a **free GeoNames account** with free web services enabled:
 
-#### Option A: with a GeoNames account (recommended)
+1. Register at <https://www.geonames.org/login>
+2. Go to <https://www.geonames.org/manageaccount>, tick **Free Web Services**, save
 
-1. Register for free at <https://www.geonames.org/login>
-2. Run:
-
-```powershell
-python scripts\fetch_ports.py --user YOUR_USERNAME
-```
-
-#### Option B: without an account (WPI-only, limited marina coverage)
+#### Run the script
 
 ```powershell
-python scripts\fetch_ports.py
+# With both WPI file and GeoNames account (recommended):
+python scripts\fetch_ports.py --wpi-file "C:\path\to\UpdatedPub150.csv" --user YOUR_USERNAME
+
+# WPI only (no GeoNames account):
+python scripts\fetch_ports.py --wpi-file "C:\path\to\UpdatedPub150.csv" --no-geonames
+
+# GeoNames only (if WPI download is unavailable):
+python scripts\fetch_ports.py --no-wpi --user YOUR_USERNAME
 ```
 
-This uses the `demo` GeoNames account which is heavily rate-limited — the WPI portion (the most useful part for maritime navigation) still downloads fully, but the marina/harbour supplement will be incomplete.
+If the script is interrupted (network error, daily quota), re-run with the same arguments — GeoNames progress is cached in `scripts/.geonames_cache.json` and already-fetched feature codes will not be re-queried.
 
 #### What the script produces
 

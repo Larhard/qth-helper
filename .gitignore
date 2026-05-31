@@ -58,3 +58,6 @@ migrate_working_dir/
 .svn/
 .swiftpm/
 **/ios/Flutter/.last_build_id
+
+# fetch_ports.py GeoNames cache (intermediate run state)
+scripts/.geonames_cache.json
