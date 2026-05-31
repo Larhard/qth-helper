@@ -1,0 +1,102 @@
+QTH Dashboard — Third-Party Notices
+====================================
+
+This file lists the third-party data sources and software libraries used by
+this project, together with their applicable licences and attribution notices.
+
+
+1. City / Place Data — GeoNames
+───────────────────────────────
+Source:   GeoNames <https://www.geonames.org>
+Licence:  Creative Commons Attribution 4.0 International (CC BY 4.0)
+          <https://creativecommons.org/licenses/by/4.0/>
+Files:    assets/cities.tsv  (committed)
+          assets/cities_precise.tsv  (generated locally, not in repo)
+          assets/cities_detailed.tsv (generated locally, not in repo)
+Script:   scripts/fetch_cities.py downloads the source data from
+          <https://download.geonames.org/export/dump/cities1000.zip>
+
+Modifications applied to GeoNames data:
+  – Selected rows with population ≥ 1 000 (cities_detailed.tsv),
+    ≥ 5 000 (cities_precise.tsv), or top 5 000 by population (cities.tsv).
+  – Retained columns: name, country code, latitude, longitude, population,
+    timezone.  All other GeoNames columns discarded.
+
+Attribution notice:
+  "City data provided by GeoNames (geonames.org), used under CC BY 4.0."
+
+
+2. World Port Index (WPI) — NGA
+────────────────────────────────
+Source:   National Geospatial-Intelligence Agency (NGA), United States Govt.
+          <https://msi.nga.mil/Publications/WPI>
+Licence:  United States Government Work — not protected by US copyright under
+          17 U.S.C. § 105.  International users: this designation does not
+          automatically mean public domain in all jurisdictions; verify your
+          local laws before redistributing.
+File:     assets/ports.tsv  (generated locally, not in repo)
+          data/UpdatedPub150.csv  (raw source — NOT in repo; download from NGA)
+Script:   scripts/fetch_ports.py parses UpdatedPub150.csv or fetches it
+          directly from the NGA publication API.
+
+Attribution notice:
+  "Commercial port data from the World Port Index, Publication 150, produced
+   by the National Geospatial-Intelligence Agency (NGA)."
+
+
+3. GeoNames Harbour / Marina Supplement
+─────────────────────────────────────────
+Source:   GeoNames <https://www.geonames.org>
+Licence:  Creative Commons Attribution 4.0 International (CC BY 4.0)
+          <https://creativecommons.org/licenses/by/4.0/>
+File:     assets/ports.tsv  (generated locally, not in repo)
+Script:   scripts/fetch_ports.py queries the GeoNames search API for
+          feature codes HBR (harbours), MRNA (marinas), LDNG (landings),
+          ANCH (anchorages).
+
+Attribution notice:
+  "Harbour and marina data provided by GeoNames (geonames.org), used under
+   CC BY 4.0."
+
+
+4. OpenStreetMap — Inland Marina Data
+───────────────────────────────────────
+Source:   OpenStreetMap contributors <https://www.openstreetmap.org>
+          Retrieved via Overpass API <https://overpass-api.de>
+Licence:  Open Database Licence 1.0 (ODbL)
+          <https://opendatacommons.org/licenses/odbl/1.0/>
+File:     assets/ports.tsv  (generated locally — only present when
+          fetch_ports.py is run with the --countries option)
+Script:   scripts/fetch_ports.py --countries <CC[,CC...]>
+
+⚠️  ODbL Share-Alike notice
+The generated ports.tsv file, when it contains OpenStreetMap-derived data
+(i.e. the --countries flag was used), constitutes a Derived Database under
+the ODbL.  Any person who redistributes that generated file MUST:
+  (a) make it available under the ODbL 1.0, AND
+  (b) include the following attribution notice with it:
+      "Contains data from © OpenStreetMap contributors, available under the
+       Open Database Licence 1.0 (https://opendatacommons.org/licenses/odbl/)"
+
+The ODbL share-alike requirement applies to the DATABASE file only.  It does
+NOT extend to the application source code (licensed MIT) or the compiled APK.
+
+The generated ports.tsv is NOT committed to this repository.  Users who run
+fetch_ports.py with --countries and then redistribute the resulting file are
+solely responsible for ODbL compliance.
+
+Attribution notice (included at app runtime):
+  "Port data includes information from © OpenStreetMap contributors (ODbL)."
+
+
+5. Flutter SDK and Dart Packages
+──────────────────────────────────
+Flutter SDK                    BSD-3-Clause
+geolocator                     MIT
+flutter_compass                MIT
+get_storage                    MIT
+url_launcher                   BSD-3-Clause
+flutter_launcher_icons (dev)   MIT
+
+Full licence texts for each package are available in their respective pub.dev
+pages and source repositories.  None require reproduction in this NOTICES file.
