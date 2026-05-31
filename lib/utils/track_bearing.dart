@@ -52,6 +52,18 @@ class TrackBearingEstimator {
   /// points have been accepted.
   double? bearing;
 
+  /// Snapshot of the current buffer as named records, oldest first.
+  List<({double lat, double lon})> get buffer =>
+      _buf.map((p) => (lat: p.lat, lon: p.lon)).toList();
+
+  /// Number of points currently stored.
+  int get bufferCount => _buf.length;
+
+  /// Straight-line distance in metres from the oldest to the newest stored
+  /// point, or null if fewer than two points are in the buffer.
+  double? get spanMetres =>
+      _buf.length >= 2 ? _buf.first.distTo(_buf.last.lat, _buf.last.lon) : null;
+
   /// Feed a new GPS fix. The bearing is updated synchronously if the point
   /// passes the separation filter.
   void update(double lat, double lon) {

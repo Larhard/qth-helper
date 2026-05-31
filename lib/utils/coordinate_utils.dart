@@ -97,6 +97,12 @@ double? parseCoordValue(String raw) {
 
 // ── Maidenhead / IARU locator ─────────────────────────────────────────────
 
+/// 4-char grid (field + square), e.g. "JO62".
+String maidenhead4(double lat, double lon) => maidenhead(lat, lon).substring(0, 4);
+
+/// 6-char grid (+ subsquare), e.g. "JO62mm". Standard in VHF/UHF/SHF contests.
+String maidenhead6(double lat, double lon) => maidenhead(lat, lon).substring(0, 6);
+
 /// Calculates 8-character Maidenhead/IARU locator (e.g. JO62mm80).
 String maidenhead(double lat, double lon) {
   final normLon = lon + 180.0;

@@ -15,6 +15,7 @@ import '../utils/geo_utils.dart';
 import '../utils/mgrs_utils.dart';
 import '../utils/units.dart';
 import '../widgets/arrow_widget.dart';
+import 'debug_screen.dart';
 import 'waypoints_screen.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -805,44 +806,49 @@ class _HomeScreenState extends State<HomeScreen>
   // ── GPS lock mode indicator ───────────────────────────────────────────────
   // Shows the current heading source (GPS/MAG) and the GPS-during-lock mode
   // (SAVE / LIVE). Hold for 1.5 s to toggle the mode.
+  // Long-press the TRK line to open the debug screen.
   Widget _lockModeWidget({required double sourceFontSize, required double trkFontSize}) {
     final modeColor = _gpsOnLock ? _liveModeColor : _saveModeColor;
-    // Progress fills toward the target mode color (opposite of current).
     final progressColor = _gpsOnLock ? _saveModeColor : _liveModeColor;
-    // gps_fixed = tracking active (LIVE), gps_off = paused during lock (SAVE).
     final modeIcon = _gpsOnLock ? Icons.gps_fixed : Icons.gps_off;
-    // Vertical bar height ≈ two text lines at the given font size.
-    final barHeight = sourceFontSize * 2.4;
+    // Bar covers the source row only (single line height).
+    final barHeight = sourceFontSize * 1.6;
 
-    return Listener(
-      onPointerDown: (_) => _startToggle(),
-      onPointerUp: (_) => _cancelToggle(),
-      onPointerCancel: (_) => _cancelToggle(),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Left vertical progress bar — always present (fixed 3 px wide) so the
-          // layout never shifts. Fills top→bottom in the target mode colour while
-          // holding; invisible at rest. Placed left-of-text so the thumb pressing
-          // the labels does not cover it.
-          SizedBox(
-            width: 3,
-            height: barHeight,
-            child: Align(
-              alignment: Alignment.topCenter,
-              child: FractionallySizedBox(
-                heightFactor: _toggleProgress,
-                child: Container(color: progressColor),
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Vertical progress bar — always 3 px wide, no layout shift.
+        Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SizedBox(
+              width: 3,
+              height: barHeight,
+              child: Align(
+                alignment: Alignment.topCenter,
+                child: FractionallySizedBox(
+                  heightFactor: _toggleProgress,
+                  child: Container(color: progressColor),
+                ),
               ),
             ),
-          ),
-          const SizedBox(width: 8),
-          Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(mainAxisSize: MainAxisSize.min, children: [
+            // Transparent spacer matching TRK line height so bar doesn't
+            // visually float away from the text it belongs to.
+            SizedBox(height: trkFontSize * 1.4),
+          ],
+        ),
+        const SizedBox(width: 8),
+        Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Source + lock-mode icon — Listener only here (GPS toggle).
+            Listener(
+              onPointerDown: (_) => _startToggle(),
+              onPointerUp: (_) => _cancelToggle(),
+              onPointerCancel: (_) => _cancelToggle(),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
                 Text(_usingGps ? 'GPS' : 'MAG',
                     style: TextStyle(
                         fontSize: sourceFontSize,
@@ -851,7 +857,13 @@ class _HomeScreenState extends State<HomeScreen>
                 const SizedBox(width: 6),
                 Icon(modeIcon, size: sourceFontSize + 1, color: modeColor),
               ]),
-              Text(
+            ),
+            // TRK line — long-press opens the debug screen.
+            // Separated from the Listener above so a deliberate long-press
+            // here doesn't accidentally start the GPS-toggle timing.
+            GestureDetector(
+              onLongPress: _openDebug,
+              child: Text(
                 _track.bearing != null
                     ? 'TRK ${_track.bearing!.round()}°'
                     : 'TRK ---',
@@ -860,11 +872,26 @@ class _HomeScreenState extends State<HomeScreen>
                     color: const Color(0xFFB0B0B0),
                     letterSpacing: 1.5),
               ),
-            ],
-          ),
-        ],
-      ),
+            ),
+          ],
+        ),
+      ],
     );
+  }
+
+  void _openDebug() {
+    HapticFeedback.mediumImpact();
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => DebugScreen(
+        position: _position,
+        compassHeading: _compassHeading,
+        track: _track,
+        coordFormat: _coordFormat,
+        locatorType: _locatorType,
+        speedUnit: _speedUnit,
+        timeUtc: _timeUtc,
+      ),
+    ));
   }
 
   // ── Coordinates ───────────────────────────────────────────────────────────

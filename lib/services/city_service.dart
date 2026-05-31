@@ -121,6 +121,20 @@ class CityService {
     return _nearestInGrid(grid, lat, lon);
   }
 
+  /// Query a specific mode regardless of the current global mode.
+  /// Falls back to coarser datasets if the requested one is not yet loaded.
+  NearestCity? nearestForMode(double lat, double lon, CityMode mode) {
+    final grid = switch (mode) {
+      CityMode.large    => _largeGrid,
+      CityMode.precise  => _preciseGrid.isNotEmpty ? _preciseGrid : _largeGrid,
+      CityMode.detailed => _detailedGrid.isNotEmpty
+          ? _detailedGrid
+          : _preciseGrid.isNotEmpty ? _preciseGrid : _largeGrid,
+    };
+    if (grid.isEmpty) return null;
+    return _nearestInGrid(grid, lat, lon);
+  }
+
   static NearestCity? _nearestInGrid(
       Map<int, List<City>> grid, double lat, double lon) {
     final latBin = (lat / _cellDeg).floor();
