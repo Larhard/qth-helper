@@ -41,6 +41,9 @@ class _DebugScreenState extends State<DebugScreen> {
 
   // Live data
   Position? _pos;
+  // Device clock sampled at the exact moment each GPS packet is received.
+  // Differencing this against pos.timestamp gives true clock skew (GPS − device).
+  DateTime? _deviceTimeAtFix;
   double _compassHeading = 0;
 
   // Satellite data from native EventChannel
@@ -80,7 +83,13 @@ class _DebugScreenState extends State<DebugScreen> {
     ).listen((pos) {
       if (!mounted) return;
       _gpsPktCount++;
-      setState(() => _pos = pos);
+      // Sample device clock the instant the packet arrives so the difference
+      // against pos.timestamp is true GPS–device clock skew, not fix age.
+      final deviceNow = DateTime.now();
+      setState(() {
+        _pos = pos;
+        _deviceTimeAtFix = deviceNow;
+      });
     }, onError: (_) {});
 
     _compassSub = FlutterCompass.events?.listen((e) {
@@ -308,7 +317,10 @@ class _DebugScreenState extends State<DebugScreen> {
         _row('Device (UTC)', _fmtDt(now.toUtc())),
         if (pos != null) ...[
           _row('GPS (UTC)', _fmtDt(pos.timestamp.toUtc())),
-          _row('Clock offset', _fmtOffset(pos.timestamp.difference(now))),
+          _row('Clock skew (GPS−device)',
+              _deviceTimeAtFix != null
+                  ? _fmtOffset(pos.timestamp.difference(_deviceTimeAtFix!))
+                  : 'Awaiting first packet'),
           _row('Declination', _fmtDecl(decl)),
         ],
 

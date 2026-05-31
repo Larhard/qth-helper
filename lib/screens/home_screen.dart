@@ -582,6 +582,25 @@ class _HomeScreenState extends State<HomeScreen>
                 constraints: const BoxConstraints(),
               ),
             ),
+            // Debug screen — hold to open; deliberate action required.
+            // GestureDetector instead of IconButton: IconButton's Tooltip
+            // widget intercepts long-press to show tooltip text, so the
+            // onLongPress callback never fires when a tooltip is set.
+            Positioned(
+              top: 4,
+              left: 4,
+              child: GestureDetector(
+                onLongPress: _openDebug,
+                child: const Padding(
+                  padding: EdgeInsets.all(8),
+                  child: Icon(
+                    Icons.bug_report_outlined,
+                    size: 22,
+                    color: Color(0xFF444444),
+                  ),
+                ),
+              ),
+            ),
           ],
         ),
       ),
@@ -810,7 +829,6 @@ class _HomeScreenState extends State<HomeScreen>
   Widget _lockModeWidget({required double sourceFontSize, required double trkFontSize}) {
     final modeColor = _gpsOnLock ? _liveModeColor : _saveModeColor;
     final progressColor = _gpsOnLock ? _saveModeColor : _liveModeColor;
-    final modeIcon = _gpsOnLock ? Icons.gps_fixed : Icons.gps_off;
     // Bar covers the source row only (single line height).
     final barHeight = sourceFontSize * 1.6;
 
@@ -855,23 +873,27 @@ class _HomeScreenState extends State<HomeScreen>
                         color: const Color(0xFFBBBBBB),
                         letterSpacing: 2.5)),
                 const SizedBox(width: 6),
-                Icon(modeIcon, size: sourceFontSize + 1, color: modeColor),
+                // [gps_fixed/@/lock] = GPS keeps running through lock screen.
+                // [gps_off/@/lock]   = GPS pauses when screen locks.
+                // Reading: "GPS [on|off] at screen lock"
+                Icon(_gpsOnLock ? Icons.gps_fixed : Icons.gps_off,
+                    size: sourceFontSize - 1, color: modeColor),
+                Text('@',
+                    style: TextStyle(
+                        fontSize: sourceFontSize - 4,
+                        color: modeColor,
+                        height: 1.0)),
+                Icon(Icons.lock, size: sourceFontSize - 1, color: modeColor),
               ]),
             ),
-            // TRK line — long-press opens the debug screen.
-            // Separated from the Listener above so a deliberate long-press
-            // here doesn't accidentally start the GPS-toggle timing.
-            GestureDetector(
-              onLongPress: _openDebug,
-              child: Text(
-                _track.bearing != null
-                    ? 'TRK ${_track.bearing!.round()}°'
-                    : 'TRK ---',
-                style: TextStyle(
-                    fontSize: trkFontSize,
-                    color: const Color(0xFFB0B0B0),
-                    letterSpacing: 1.5),
-              ),
+            Text(
+              _track.bearing != null
+                  ? 'TRK ${_track.bearing!.round()}°'
+                  : 'TRK ---',
+              style: TextStyle(
+                  fontSize: trkFontSize,
+                  color: const Color(0xFFB0B0B0),
+                  letterSpacing: 1.5),
             ),
           ],
         ),
