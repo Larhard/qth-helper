@@ -26,9 +26,9 @@ import 'dart:math';
 ///     even after long stationary periods with occasional jitter.
 class TrackBearingEstimator {
   TrackBearingEstimator({
-    this.maxSize = 12,
-    this.minSepM = 15.0,
-    this.maxSpanM = 300.0,
+    this.maxSize = 10,
+    this.minSepM = 8.0,
+    this.maxSpanM = 80.0,
   });
 
   /// Maximum number of points to hold in the buffer.
@@ -42,6 +42,8 @@ class TrackBearingEstimator {
   /// Once the straight-line span between the oldest and newest stored points
   /// exceeds this (metres), eviction switches to removing the oldest point
   /// (sliding spatial window) instead of collapsing the densest cluster.
+  /// 80 m means the bearing adapts within ~80 m of a direction change —
+  /// about 90 s at hiking pace, fast enough for switchback trails.
   final double maxSpanM;
 
   final _buf = <_Pt>[];
