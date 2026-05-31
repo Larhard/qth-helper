@@ -102,8 +102,45 @@ class _HomeScreenState extends State<HomeScreen>
   bool _toggling = false;
   double _toggleProgress = 0.0;
 
-  static const _saveModeColor = Color(0xFFFFAB40);  // amber — GPS pauses at lock
-  static const _liveModeColor = Color(0xFF26C6DA);  // cyan  — GPS on at lock
+  // ── Day / Night mode ──────────────────────────────────────────────────────
+  // Day  : full-contrast palette — readable in direct sunlight.
+  // Night: red-only palette — preserves rhodopsin (night-vision accommodation)
+  //        by emitting only long-wavelength light.  No greens, blues, or ambers.
+  bool _dayMode = GetStorage().read<bool>('day_mode') ?? true;
+
+  // Text hierarchy
+  Color get _cText1 => _dayMode ? Colors.white                : const Color(0xFFCC3333);
+  Color get _cText2 => _dayMode ? const Color(0xFFEEEEEE)     : const Color(0xFF882222);
+  Color get _cText3 => _dayMode ? const Color(0xFFCCCCCC)     : const Color(0xFF551111);
+  // Element-specific
+  Color get _cSpeed   => _dayMode ? const Color(0xFFD8D8D8)   : const Color(0xFF882222);
+  Color get _cAltAcc  => _dayMode ? const Color(0xFFCCCCCC)   : const Color(0xFF551111);
+  Color get _cStale   => _dayMode ? const Color(0xFFFF7043)   : const Color(0xFFCC2222);
+  Color get _cLocator => _dayMode ? const Color(0xFF00E5FF)   : const Color(0xFF993333);
+  Color get _cLocatorLabel => _dayMode ? const Color(0xFF3DBFBF) : const Color(0xFF551111);
+  Color get _cMgrs    => _dayMode ? const Color(0xFFFFA726)   : const Color(0xFF882222);
+  Color get _cMgrsLabel => _dayMode ? const Color(0xFFE65100) : const Color(0xFF551111);
+  Color get _cTime    => _dayMode
+      ? (_timeUtc ? const Color(0xFF55DD55) : const Color(0xFFFFB74D))
+      : const Color(0xFF882222);
+  Color get _cTimeLabel => _dayMode
+      ? (_timeUtc ? const Color(0xFF3DBF3D) : const Color(0xFFE65100))
+      : const Color(0xFF441111);
+  // GPS-lock toggle indicator
+  Color get _cSaveLock => _dayMode ? const Color(0xFFFFAB40) : const Color(0xFF661111);
+  Color get _cLiveLock => _dayMode ? const Color(0xFF26C6DA) : const Color(0xFF992222);
+  // Active waypoint / MOB card
+  Color get _cWptName   => _dayMode ? const Color(0xFFFF3333) : const Color(0xFF882222);
+  Color get _cWptArrow  => _dayMode ? const Color(0xFFFF3333) : const Color(0xFF882222);
+  Color get _cWptData   => _dayMode ? const Color(0xFFFF2020) : const Color(0xFF771111);
+  Color get _cWptCoords => _dayMode ? const Color(0xFFCC2222) : const Color(0xFF661111);
+  Color get _cWptHint   => _dayMode ? const Color(0xFF4A1A1A) : const Color(0xFF331111);
+
+  void _toggleDayMode() {
+    HapticFeedback.lightImpact();
+    setState(() => _dayMode = !_dayMode);
+    GetStorage().write('day_mode', _dayMode);
+  }
 
   // ── Derived ───────────────────────────────────────────────────────────────
   bool get _usingGps {
@@ -112,20 +149,19 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   double get _heading => _usingGps ? _position!.heading : _compassHeading;
-  Color get _headingColor => _usingGps ? const Color(0xFF55DD55) : Colors.white;
 
-  // Color progression follows the warm spectrum — orange → amber → lime —
-  // so all three levels read as "the same concept at increasing resolution."
-  // The traffic-light metaphor (orange/yellow/green) reinforces the scale
-  // intuitively without requiring the user to memorise anything.
-  // Lime (#C6FF00) is clearly distinct from the mint green of the GPS arrow
-  // and IARU locator (#69F0AE), avoiding cross-section confusion.
-  Color get _cityColor => switch (CityService.instance.mode) {
+  // In night mode both GPS and compass arrows use dim red; no greens or whites.
+  Color get _headingColor => _dayMode
+      ? (_usingGps ? const Color(0xFF55DD55) : Colors.white)
+      : (_usingGps ? const Color(0xFFCC2222) : const Color(0xFF882222));
+
+  // City accent colours collapse to dim red in night mode.
+  Color get _cityColor => !_dayMode ? const Color(0xFF882222) : switch (CityService.instance.mode) {
     CityMode.large    => const Color(0xFFFF9800),  // orange   — global overview
     CityMode.precise  => const Color(0xFFFFD740),  // amber    — regional
     CityMode.detailed => const Color(0xFFC6FF00),  // lime     — local detail
   };
-  Color get _citySubColor => switch (CityService.instance.mode) {
+  Color get _citySubColor => !_dayMode ? const Color(0xFF551111) : switch (CityService.instance.mode) {
     CityMode.large    => const Color(0xFFE65100),  // deep orange
     CityMode.precise  => const Color(0xFFFFAB40),  // light amber
     CityMode.detailed => const Color(0xFFAEEA00),  // darker lime
@@ -663,17 +699,42 @@ class _HomeScreenState extends State<HomeScreen>
               child: GestureDetector(
                 onLongPress: _openDebug,
                 behavior: HitTestBehavior.opaque,
-                child: const SizedBox(
+                child: SizedBox(
                   width: 48,
                   height: 48,
                   child: Align(
                     alignment: Alignment.topLeft,
                     child: Padding(
-                      padding: EdgeInsets.only(top: 6, left: 6),
+                      padding: const EdgeInsets.only(top: 6, left: 6),
                       child: Icon(
                         Icons.bug_report_outlined,
                         size: 22,
-                        color: Color(0xFF444444),
+                        color: _dayMode ? const Color(0xFF444444) : const Color(0xFF441111),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            // Day / Night toggle — single tap, no hold required since it is
+            // used regularly.  Moon shown in day mode (tap → night); sun in night.
+            Positioned(
+              top: 0,
+              right: 50,
+              child: GestureDetector(
+                onTap: _toggleDayMode,
+                behavior: HitTestBehavior.opaque,
+                child: SizedBox(
+                  width: 48,
+                  height: 48,
+                  child: Align(
+                    alignment: Alignment.topRight,
+                    child: Padding(
+                      padding: const EdgeInsets.only(top: 6, right: 6),
+                      child: Icon(
+                        _dayMode ? Icons.nightlight_round : Icons.wb_sunny_outlined,
+                        size: 22,
+                        color: _dayMode ? const Color(0xFF888888) : const Color(0xFF882222),
                       ),
                     ),
                   ),
@@ -822,11 +883,11 @@ class _HomeScreenState extends State<HomeScreen>
           onLongPress: _cycleSpeedUnit,
           child: Text(
             formatSpeed(pos.speed, _speedUnit),
-            style: const TextStyle(
+            style: TextStyle(
                 fontSize: 26,
                 fontWeight: FontWeight.w600,
-                color: Color(0xFFD8D8D8),
-                fontFeatures: [FontFeature.tabularFigures()]),
+                color: _cSpeed,
+                fontFeatures: const [FontFeature.tabularFigures()]),
           ),
         ),
         _lockModeWidget(sourceFontSize: 14, trkFontSize: 14),
@@ -859,7 +920,7 @@ class _HomeScreenState extends State<HomeScreen>
                   opacity: 0.38,
                   child: ArrowWidget(
                       bearingDeg: secondaryBearing,
-                      color: Colors.white,
+                      color: _dayMode ? Colors.white : const Color(0xFF882222),
                       size: 80),
                 );
               },
@@ -887,11 +948,11 @@ class _HomeScreenState extends State<HomeScreen>
               onLongPress: _cycleSpeedUnit,
               child: Text(
                 formatSpeed(pos.speed, _speedUnit),
-                style: const TextStyle(
+                style: TextStyle(
                     fontSize: 20,
                     fontWeight: FontWeight.w600,
-                    color: Color(0xFFD8D8D8),
-                    fontFeatures: [FontFeature.tabularFigures()]),
+                    color: _cSpeed,
+                    fontFeatures: const [FontFeature.tabularFigures()]),
               ),
             ),
             _lockModeWidget(sourceFontSize: 12, trkFontSize: 12),
@@ -906,8 +967,8 @@ class _HomeScreenState extends State<HomeScreen>
   // (SAVE / LIVE). Hold for 1.5 s to toggle the mode.
   // Long-press the TRK line to open the debug screen.
   Widget _lockModeWidget({required double sourceFontSize, required double trkFontSize}) {
-    final modeColor = _gpsOnLock ? _liveModeColor : _saveModeColor;
-    final progressColor = _gpsOnLock ? _saveModeColor : _liveModeColor;
+    final modeColor = _gpsOnLock ? _cLiveLock : _cSaveLock;
+    final progressColor = _gpsOnLock ? _cSaveLock : _cLiveLock;
     // Bar covers the source row only (single line height).
     final barHeight = sourceFontSize * 1.6;
 
@@ -949,7 +1010,7 @@ class _HomeScreenState extends State<HomeScreen>
                 Text(_usingGps ? 'GPS' : 'MAG',
                     style: TextStyle(
                         fontSize: sourceFontSize,
-                        color: const Color(0xFFDDDDDD),
+                        color: _cText2,
                         letterSpacing: 2.5)),
                 const SizedBox(width: 6),
                 // [gps_fixed/@/lock] = GPS keeps running through lock screen.
@@ -971,7 +1032,7 @@ class _HomeScreenState extends State<HomeScreen>
                   : 'TRK ---',
               style: TextStyle(
                   fontSize: trkFontSize,
-                  color: const Color(0xFFCCCCCC),
+                  color: _cText3,
                   letterSpacing: 1.5),
             ),
           ],
@@ -999,11 +1060,11 @@ class _HomeScreenState extends State<HomeScreen>
   Widget _coordsSection() {
     // Coordinates are "medium" priority — smaller than the locator (critical)
     // but bigger than altitude (tertiary). Long-press cycles the format.
-    const coordStyle = TextStyle(
+    final coordStyle = TextStyle(
       fontSize: 22,
-      color: Color(0xFFFFFFFF),
+      color: _cText1,
       fontWeight: FontWeight.w600,
-      fontFeatures: [FontFeature.tabularFigures()],
+      fontFeatures: const [FontFeature.tabularFigures()],
     );
 
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -1027,11 +1088,11 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   Widget _coordsSectionLandscape() {
-    const coordStyle = TextStyle(
+    final coordStyle = TextStyle(
       fontSize: 22,
-      color: Color(0xFFFFFFFF),
+      color: _cText1,
       fontWeight: FontWeight.w600,
-      fontFeatures: [FontFeature.tabularFigures()],
+      fontFeatures: const [FontFeature.tabularFigures()],
     );
 
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -1059,10 +1120,8 @@ class _HomeScreenState extends State<HomeScreen>
   // Long-press toggles the type; tap copies the value.
   Widget _locatorRow({required double fontSize, required double letterSpacing}) {
     final isMaidenhead = _locatorType == LocatorType.maidenhead;
-    final locColor =
-        isMaidenhead ? const Color(0xFF55DD55) : const Color(0xFFFFA726);
-    final labelColor =
-        isMaidenhead ? const Color(0xFF3DBF3D) : const Color(0xFFE65100);
+    final locColor = isMaidenhead ? _cLocator : _cMgrs;
+    final labelColor = isMaidenhead ? _cLocatorLabel : _cMgrsLabel;
     final locFontSize = isMaidenhead ? fontSize : fontSize * 0.72;
     final locLetterSpacing = isMaidenhead ? letterSpacing : 0.5;
     final label = isMaidenhead ? 'IARU' : 'MGRS';
@@ -1097,15 +1156,15 @@ class _HomeScreenState extends State<HomeScreen>
     final staleStr = stale ? '  GPS ${_staleDuration(_gpsStaleSeconds)}' : '';
     return Row(children: [
       Text('alt $altStr',
-          style: const TextStyle(
+          style: TextStyle(
               fontSize: 14,
-              color: Color(0xFFAAAAAA),
-              fontFeatures: [FontFeature.tabularFigures()])),
+              color: _cAltAcc,
+              fontFeatures: const [FontFeature.tabularFigures()])),
       const SizedBox(width: 12),
       Text('$accStr$staleStr',
           style: TextStyle(
               fontSize: 14,
-              color: stale ? const Color(0xFFFF7043) : const Color(0xFF999999),
+              color: stale ? _cStale : _cAltAcc,
               fontFeatures: const [FontFeature.tabularFigures()])),
     ]);
   }
@@ -1118,10 +1177,9 @@ class _HomeScreenState extends State<HomeScreen>
     final now = DateTime.now().add(_gpsClockOffset);
     final dateStr = _fmtDate(now, _timeUtc);
     final timeStr = _fmtTime(now, _timeUtc);
-    final color = _timeUtc ? const Color(0xFF55DD55) : const Color(0xFFFFB74D);
+    final color = _cTime;
     final label = _timeUtc ? 'UTC' : 'LCL';
-    final labelColor =
-        _timeUtc ? const Color(0xFF3DBF3D) : const Color(0xFFE65100);
+    final labelColor = _cTimeLabel;
     final labelSize = fontSize >= 16 ? 12.0 : 11.0;
     return GestureDetector(
       onLongPress: _toggleTimeZone,
@@ -1303,7 +1361,7 @@ class _HomeScreenState extends State<HomeScreen>
       onPointerUp: (_) => _cancelClear(),
       onPointerCancel: (_) => _cancelClear(),
       child: CustomPaint(
-        painter: _WptBorderPainter(_clearProgress),
+        painter: _WptBorderPainter(_clearProgress, dayMode: _dayMode),
         child: Padding(
           padding: padding,
           child: Column(
@@ -1315,7 +1373,7 @@ class _HomeScreenState extends State<HomeScreen>
                 children: [
                   ArrowWidget(
                       bearingDeg: b,
-                      color: const Color(0xFFFF3333),
+                      color: _cWptArrow,
                       size: arrowSize),
                   const SizedBox(width: 14),
                   Expanded(
@@ -1327,19 +1385,19 @@ class _HomeScreenState extends State<HomeScreen>
                             style: TextStyle(
                                 fontSize: nameFontSize,
                                 fontWeight: FontWeight.w900,
-                                color: const Color(0xFFFF3333),
+                                color: _cWptName,
                                 letterSpacing: 1.5)),
                         Row(children: [
                           Text('${b.round()}°',
                               style: TextStyle(
                                   fontSize: dataFontSize,
-                                  color: const Color(0xFFFF2020),
+                                  color: _cWptData,
                                   fontFeatures: const [FontFeature.tabularFigures()])),
                           const SizedBox(width: 14),
                           Text(formatDistanceUnit(d, _speedUnit),
                               style: TextStyle(
                                   fontSize: dataFontSize,
-                                  color: const Color(0xFFFF3333),
+                                  color: _cWptName,
                                   fontWeight: FontWeight.w600,
                                   fontFeatures: const [FontFeature.tabularFigures()])),
                         ]),
@@ -1369,12 +1427,12 @@ class _HomeScreenState extends State<HomeScreen>
                 fontSize: coordFontSize,
               ),
               SizedBox(height: portrait ? 6 : 4),
-              const Align(
+              Align(
                 alignment: Alignment.centerRight,
                 child: Text('HOLD 3s TO DEACTIVATE',
                     style: TextStyle(
                         fontSize: 10,
-                        color: Color(0xFF4A1A1A),
+                        color: _cWptHint,
                         letterSpacing: 1.5)),
               ),
             ],
@@ -1394,7 +1452,7 @@ class _HomeScreenState extends State<HomeScreen>
   }) {
     final style = TextStyle(
       fontSize: fontSize,
-      color: const Color(0xFFCC2222),
+      color: _cWptCoords,
       fontFeatures: const [FontFeature.tabularFigures()],
     );
     return Row(
@@ -1412,7 +1470,8 @@ class _HomeScreenState extends State<HomeScreen>
 // ── Waypoint card border painter ──────────────────────────────────────────────
 class _WptBorderPainter extends CustomPainter {
   final double progress;
-  const _WptBorderPainter(this.progress);
+  final bool dayMode;
+  const _WptBorderPainter(this.progress, {required this.dayMode});
 
   static const _trackWidth = 1.5;
   static const _arcWidth = 5.5;
@@ -1430,8 +1489,8 @@ class _WptBorderPainter extends CustomPainter {
         ..style = PaintingStyle.stroke
         ..strokeWidth = _trackWidth
         ..color = progress > 0
-            ? const Color(0xFF4A1515)
-            : const Color(0xFF3D1212),
+            ? (dayMode ? const Color(0xFF4A1515) : const Color(0xFF2A0A0A))
+            : (dayMode ? const Color(0xFF3D1212) : const Color(0xFF1A0808)),
     );
 
     if (progress <= 0) return;
@@ -1445,12 +1504,14 @@ class _WptBorderPainter extends CustomPainter {
       Paint()
         ..style = PaintingStyle.stroke
         ..strokeWidth = _arcWidth
-        ..color =
-            Color.lerp(const Color(0xFFFF3333), const Color(0xFFFF6666), progress)!
+        ..color = dayMode
+            ? Color.lerp(const Color(0xFFFF3333), const Color(0xFFFF6666), progress)!
+            : Color.lerp(const Color(0xFF882222), const Color(0xFFAA3333), progress)!
         ..strokeCap = StrokeCap.round,
     );
   }
 
   @override
-  bool shouldRepaint(_WptBorderPainter old) => old.progress != progress;
+  bool shouldRepaint(_WptBorderPainter old) =>
+      old.progress != progress || old.dayMode != dayMode;
 }
