@@ -887,9 +887,9 @@ class _HomeScreenState extends State<HomeScreen>
             flex: 6,
             fit: FlexFit.tight,
             child: Container(
-              decoration: const BoxDecoration(
+              decoration: BoxDecoration(
                 border: Border(
-                  left: BorderSide(color: Color(0xFF1A1A1A), width: 1),
+                  left: BorderSide(color: _cDivider, width: 1),
                 ),
               ),
               padding: const EdgeInsets.only(left: 14),
@@ -912,14 +912,17 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
-  Widget _divider() => const Padding(
-        padding: EdgeInsets.symmetric(vertical: 14),
-        child: Divider(color: Color(0xFF1A1A1A), height: 1),
+  Color get _cDivider =>
+      _dayMode ? const Color(0xFF1A1A1A) : const Color(0xFF2A0000);
+
+  Widget _divider() => Padding(
+        padding: const EdgeInsets.symmetric(vertical: 14),
+        child: Divider(color: _cDivider, height: 1),
       );
 
-  Widget _dividerCompact() => const Padding(
-        padding: EdgeInsets.symmetric(vertical: 8),
-        child: Divider(color: Color(0xFF1A1A1A), height: 1),
+  Widget _dividerCompact() => Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: Divider(color: _cDivider, height: 1),
       );
 
   // ── Heading ───────────────────────────────────────────────────────────────

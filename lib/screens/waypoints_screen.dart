@@ -204,13 +204,16 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      backgroundColor: const Color(0xFF111111),
+      backgroundColor: widget.dayMode
+          ? const Color(0xFF111111)
+          : const Color(0xFF0A0000),
       shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(12))),
       builder: (_) => _WptEditSheet(
         existing: existing,
         screenCtx: context,
         coordFormat: widget.coordFormat,
+        dayMode: widget.dayMode,
         onSaved: () => setState(() {}),
       ),
     );
@@ -234,12 +237,14 @@ class _WptEditSheet extends StatefulWidget {
   final Waypoint? existing;
   final BuildContext screenCtx;
   final CoordFormat coordFormat;
+  final bool dayMode;
   final VoidCallback onSaved;
 
   const _WptEditSheet({
     required this.existing,
     required this.screenCtx,
     required this.coordFormat,
+    required this.dayMode,
     required this.onSaved,
   });
 
@@ -323,21 +328,33 @@ class _WptEditSheetState extends State<_WptEditSheet> {
     widget.onSaved();
   }
 
+  // ── Night-safe colour helpers ─────────────────────────────────────────────
+  bool get _day => widget.dayMode;
+  Color get _cText    => _day ? Colors.white               : const Color(0xFFCC3333);
+  Color get _cLabel   => _day ? Colors.white38             : const Color(0xFF882222);
+  Color get _cHint    => _day ? Colors.white24             : const Color(0xFF551111);
+  Color get _cBorder  => _day ? const Color(0xFF333333)    : const Color(0xFF440000);
+  Color get _cFocus   => _day ? const Color(0xFF555555)    : const Color(0xFF882222);
+  Color get _cSymBg   => _day ? const Color(0xFF1A2A1A)    : const Color(0xFF1A0000);
+  Color get _cSymFg   => _day ? const Color(0xFF55DD55)    : const Color(0xFFCC3333);
+  Color get _cSaveBg  => _day ? const Color(0xFF1A3A1A)    : const Color(0xFF3A0000);
+  Color get _cCancel  => _day ? Colors.white38             : const Color(0xFF882222);
+  Color get _cDlgBg   => _day ? const Color(0xFF1A1A1A)    : const Color(0xFF1A0000);
+  Color get _cDlgBody => _day ? Colors.white54             : const Color(0xFF882222);
+
   void _confirmDelete() {
-    Navigator.pop(context); // close sheet
+    Navigator.pop(context);
     showDialog(
       context: widget.screenCtx,
       builder: (dlgCtx) => AlertDialog(
-        backgroundColor: const Color(0xFF1A1A1A),
-        title: const Text('Delete waypoint?',
-            style: TextStyle(color: Colors.white)),
+        backgroundColor: _cDlgBg,
+        title: Text('Delete waypoint?', style: TextStyle(color: _cText)),
         content: Text('Remove "${widget.existing!.name}"?',
-            style: const TextStyle(color: Colors.white54)),
+            style: TextStyle(color: _cDlgBody)),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dlgCtx),
-            child: const Text('Cancel',
-                style: TextStyle(color: Colors.white38)),
+            child: Text('Cancel', style: TextStyle(color: _cCancel)),
           ),
           TextButton(
             onPressed: () {
@@ -369,16 +386,14 @@ class _WptEditSheetState extends State<_WptEditSheet> {
         children: [
           // ── Header ──────────────────────────────────────────────────────
           Text(widget.existing != null ? 'Edit Waypoint' : 'Add Waypoint',
-              style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 18,
-                  fontWeight: FontWeight.w600)),
+              style: TextStyle(
+                  color: _cText, fontSize: 18, fontWeight: FontWeight.w600)),
           const SizedBox(height: 20),
 
           // ── Name ────────────────────────────────────────────────────────
           TextField(
             controller: _nameCtrl,
-            style: const TextStyle(color: Colors.white),
+            style: TextStyle(color: _cText),
             decoration: _dec('Name', 'e.g. Summit KR-001'),
             textCapitalization: TextCapitalization.sentences,
           ),
@@ -388,7 +403,7 @@ class _WptEditSheetState extends State<_WptEditSheet> {
           TextField(
             controller: _latCtrl,
             focusNode: _latFocus,
-            style: const TextStyle(color: Colors.white),
+            style: TextStyle(color: _cText),
             decoration: _dec('Latitude', latHint, errorText: _latError),
             keyboardType: const TextInputType.numberWithOptions(
                 signed: true, decimal: true),
@@ -399,7 +414,7 @@ class _WptEditSheetState extends State<_WptEditSheet> {
           TextField(
             controller: _lonCtrl,
             focusNode: _lonFocus,
-            style: const TextStyle(color: Colors.white),
+            style: TextStyle(color: _cText),
             decoration: _dec('Longitude', lonHint, errorText: _lonError),
             keyboardType: const TextInputType.numberWithOptions(
                 signed: true, decimal: true),
@@ -419,8 +434,8 @@ class _WptEditSheetState extends State<_WptEditSheet> {
                           tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                           padding: const EdgeInsets.symmetric(
                               horizontal: 12, vertical: 8),
-                          backgroundColor: const Color(0xFF1A2A1A),
-                          foregroundColor: const Color(0xFF55DD55),
+                          backgroundColor: _cSymBg,
+                          foregroundColor: _cSymFg,
                           shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(4)),
                         ),
@@ -446,19 +461,17 @@ class _WptEditSheetState extends State<_WptEditSheet> {
             const Spacer(),
             TextButton(
               onPressed: () => Navigator.pop(context),
-              style:
-                  TextButton.styleFrom(foregroundColor: Colors.white38),
+              style: TextButton.styleFrom(foregroundColor: _cCancel),
               child: const Text('Cancel'),
             ),
             const SizedBox(width: 8),
             ElevatedButton(
               style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF1A3A1A),
-                foregroundColor: Colors.white,
+                backgroundColor: _cSaveBg,
+                foregroundColor: _cText,
               ),
               onPressed: _save,
-              child:
-                  Text(widget.existing != null ? 'Save' : 'Add'),
+              child: Text(widget.existing != null ? 'Save' : 'Add'),
             ),
           ]),
         ],
@@ -466,23 +479,22 @@ class _WptEditSheetState extends State<_WptEditSheet> {
     );
   }
 
-  static InputDecoration _dec(String label, String hint,
-      {String? errorText}) {
+  InputDecoration _dec(String label, String hint, {String? errorText}) {
     return InputDecoration(
       labelText: label,
       hintText: hint,
       errorText: errorText,
-      labelStyle: const TextStyle(color: Colors.white38),
-      hintStyle: const TextStyle(color: Colors.white24),
-      errorStyle: const TextStyle(color: Color(0xFFFF5252)),
-      enabledBorder: const UnderlineInputBorder(
-          borderSide: BorderSide(color: Color(0xFF333333))),
-      focusedBorder: const UnderlineInputBorder(
-          borderSide: BorderSide(color: Color(0xFF555555))),
+      labelStyle: TextStyle(color: _cLabel),
+      hintStyle: TextStyle(color: _cHint),
+      errorStyle: const TextStyle(color: Color(0xFFFF3333)),
+      enabledBorder: UnderlineInputBorder(
+          borderSide: BorderSide(color: _cBorder)),
+      focusedBorder: UnderlineInputBorder(
+          borderSide: BorderSide(color: _cFocus)),
       errorBorder: const UnderlineInputBorder(
-          borderSide: BorderSide(color: Color(0xFFFF5252))),
+          borderSide: BorderSide(color: Color(0xFFFF3333))),
       focusedErrorBorder: const UnderlineInputBorder(
-          borderSide: BorderSide(color: Color(0xFFFF5252))),
+          borderSide: BorderSide(color: Color(0xFFFF3333))),
     );
   }
 }

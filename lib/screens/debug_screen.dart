@@ -157,6 +157,7 @@ class _DebugScreenState extends State<DebugScreen> {
             labelColor: _cText,
             unselectedLabelColor: _cDim,
             indicatorColor: _cHead,
+            dividerColor: _cDim,
             labelStyle: TextStyle(fontSize: 12, letterSpacing: 1.5),
             tabs: [
               Tab(text: 'GPS'),
@@ -197,8 +198,9 @@ class _DebugScreenState extends State<DebugScreen> {
                 fontWeight: FontWeight.w700)),
       );
 
-  Widget _divider() =>
-      const Divider(color: Color(0xFF111111), height: 1, thickness: 1);
+  Widget _divider() => Divider(
+      color: _day ? const Color(0xFF111111) : const Color(0xFF2A0000),
+      height: 1, thickness: 1);
 
   Widget _row(String label, String value,
       {Color? vc, bool mono = true, VoidCallback? onTap}) {
