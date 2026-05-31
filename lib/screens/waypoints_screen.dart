@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:geolocator/geolocator.dart';
+import 'about_screen.dart';
 import '../models/waypoint.dart';
 import '../services/waypoint_service.dart';
 import '../utils/coordinate_utils.dart' show formatLatF, formatLonF, maidenhead, parseCoordValue, coordLatHint, coordLonHint;
@@ -75,6 +76,14 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
             icon: const Icon(Icons.add_location_alt_outlined),
             tooltip: 'Add waypoint manually',
             onPressed: () => _showEditSheet(null),
+          ),
+          IconButton(
+            icon: const Icon(Icons.info_outline),
+            tooltip: 'About & Legal',
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const AboutScreen()),
+            ),
           ),
         ],
       ),
