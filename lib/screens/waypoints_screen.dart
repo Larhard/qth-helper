@@ -100,8 +100,9 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
             )
           : ListView.separated(
               itemCount: wpts.length,
-              separatorBuilder: (_, __) =>
-                  const Divider(color: Color(0xFF1A1A1A), height: 1),
+              separatorBuilder: (_, __) => Divider(
+                  color: _day ? const Color(0xFF1A1A1A) : const Color(0xFF2A0000),
+                  height: 1),
               itemBuilder: (ctx, i) => _tile(wpts[i]),
             ),
     );
@@ -126,6 +127,11 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
 
     return ListTile(
       tileColor: isActive ? const Color(0xFF1A0000) : Colors.transparent,
+      splashColor: (_day ? Colors.white : const Color(0xFF882222)).withValues(alpha: 0.12),
+      overlayColor: WidgetStateProperty.resolveWith((states) =>
+          states.contains(WidgetState.pressed)
+              ? (_day ? Colors.white : const Color(0xFF882222)).withValues(alpha: 0.12)
+              : null),
       leading: Icon(
         isActive ? Icons.navigation : Icons.location_on_outlined,
         color: isActive ? _cActive : _cDim,
