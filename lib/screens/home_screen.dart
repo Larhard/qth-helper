@@ -137,9 +137,12 @@ class _HomeScreenState extends State<HomeScreen>
   Color get _cWptHint   => _dayMode ? const Color(0xFF4A1A1A) : const Color(0xFF331111);
 
   void _toggleDayMode() {
-    HapticFeedback.lightImpact();
+    HapticFeedback.mediumImpact();
     setState(() => _dayMode = !_dayMode);
     GetStorage().write('day_mode', _dayMode);
+    _showSettingSnack(_dayMode
+        ? 'Day mode — full brightness'
+        : 'Night mode — red only, preserves night vision');
   }
 
   // ── Derived ───────────────────────────────────────────────────────────────
@@ -160,11 +163,13 @@ class _HomeScreenState extends State<HomeScreen>
     CityMode.large    => const Color(0xFFFF9800),  // orange   — global overview
     CityMode.precise  => const Color(0xFFFFD740),  // amber    — regional
     CityMode.detailed => const Color(0xFFC6FF00),  // lime     — local detail
+    CityMode.port     => const Color(0xFF29B6F6),  // nautical blue — port
   };
   Color get _citySubColor => !_dayMode ? const Color(0xFF551111) : switch (CityService.instance.mode) {
     CityMode.large    => const Color(0xFFE65100),  // deep orange
     CityMode.precise  => const Color(0xFFFFAB40),  // light amber
     CityMode.detailed => const Color(0xFFAEEA00),  // darker lime
+    CityMode.port     => const Color(0xFF0288D1),  // medium blue
   };
 
   // ── Lifecycle ─────────────────────────────────────────────────────────────
@@ -604,6 +609,7 @@ class _HomeScreenState extends State<HomeScreen>
           coordFormat: _coordFormat,
           locatorType: _locatorType,
           timeUtc: _timeUtc,
+          dayMode: _dayMode,
         ),
       ),
     );
@@ -673,18 +679,30 @@ class _HomeScreenState extends State<HomeScreen>
         child: Stack(
           children: [
             isLandscape ? _buildLandscape(pos) : _buildPortrait(pos),
-            // Waypoints list — small, deliberate tap required.
+            // Waypoints — 48 × 48 hit area, icon visually at top-right corner.
             Positioned(
-              top: 4,
-              right: 4,
-              child: IconButton(
-                icon: const Icon(Icons.pin_drop_outlined),
-                iconSize: 22,
-                color: const Color(0xFF888888),
-                onPressed: _openWaypoints,
-                tooltip: 'Waypoints',
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(),
+              top: 0,
+              right: 0,
+              child: GestureDetector(
+                onTap: _openWaypoints,
+                behavior: HitTestBehavior.opaque,
+                child: SizedBox(
+                  width: 48,
+                  height: 48,
+                  child: Align(
+                    alignment: Alignment.topRight,
+                    child: Padding(
+                      padding: const EdgeInsets.only(top: 6, right: 6),
+                      child: Icon(
+                        Icons.pin_drop_outlined,
+                        size: 22,
+                        color: _dayMode
+                            ? const Color(0xFF888888)
+                            : const Color(0xFF661111),
+                      ),
+                    ),
+                  ),
+                ),
               ),
             ),
             // Debug screen — hold to open; deliberate action required.
@@ -716,13 +734,13 @@ class _HomeScreenState extends State<HomeScreen>
                 ),
               ),
             ),
-            // Day / Night toggle — single tap, no hold required since it is
-            // used regularly.  Moon shown in day mode (tap → night); sun in night.
+            // Day / Night toggle — hold required (accidental switch during night
+            // sailing would be dangerous).  Placed immediately left of waypoints.
             Positioned(
               top: 0,
-              right: 50,
+              right: 48,
               child: GestureDetector(
-                onTap: _toggleDayMode,
+                onLongPress: _toggleDayMode,
                 behavior: HitTestBehavior.opaque,
                 child: SizedBox(
                   width: 48,
@@ -734,7 +752,9 @@ class _HomeScreenState extends State<HomeScreen>
                       child: Icon(
                         _dayMode ? Icons.nightlight_round : Icons.wb_sunny_outlined,
                         size: 22,
-                        color: _dayMode ? const Color(0xFF888888) : const Color(0xFF882222),
+                        color: _dayMode
+                            ? const Color(0xFF888888)
+                            : const Color(0xFF882222),
                       ),
                     ),
                   ),
@@ -1052,6 +1072,7 @@ class _HomeScreenState extends State<HomeScreen>
         locatorType: _locatorType,
         speedUnit: _speedUnit,
         timeUtc: _timeUtc,
+        dayMode: _dayMode,
       ),
     ));
   }

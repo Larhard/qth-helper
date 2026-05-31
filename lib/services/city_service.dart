@@ -5,7 +5,12 @@ import '../utils/geo_utils.dart';
 
 typedef NearestCity = ({City city, double distKm, double bearingDeg});
 
-enum CityMode { large, precise, detailed }
+/// City / POI display mode.
+/// large    → biggest cities (global reference)
+/// precise  → regional cities
+/// detailed → local cities
+/// port     → ports, harbours, marinas (sea / inland / lake)
+enum CityMode { large, precise, detailed, port }
 
 class CityService {
   CityService._();
@@ -17,6 +22,7 @@ class CityService {
   Map<int, List<City>> _largeGrid = {};
   Map<int, List<City>> _preciseGrid = {};
   Map<int, List<City>> _detailedGrid = {};
+  Map<int, List<City>> _portGrid = {};
   bool loaded = false;
 
   static final _store = GetStorage();
@@ -31,7 +37,8 @@ class CityService {
     _mode = switch (_mode) {
       CityMode.large    => CityMode.precise,
       CityMode.precise  => CityMode.detailed,
-      CityMode.detailed => CityMode.large,
+      CityMode.detailed => CityMode.port,
+      CityMode.port     => CityMode.large,
     };
     _store.write(_modeKey, _mode.index);
   }
@@ -46,6 +53,7 @@ class CityService {
       // Load larger datasets in background — ready before the user first taps.
       _loadPrecise();
       _loadDetailed();
+      _loadPorts();
     } catch (_) {
       loaded = false;
     }
@@ -63,6 +71,14 @@ class CityService {
     try {
       if (_detailedGrid.isEmpty) {
         _detailedGrid = _buildGrid(await _parseTsv('assets/cities_detailed.tsv'));
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _loadPorts() async {
+    try {
+      if (_portGrid.isEmpty) {
+        _portGrid = _buildGrid(await _parseTsv('assets/ports.tsv'));
       }
     } catch (_) {}
   }
@@ -113,9 +129,8 @@ class CityService {
       CityMode.precise  => _preciseGrid.isNotEmpty ? _preciseGrid : _largeGrid,
       CityMode.detailed => _detailedGrid.isNotEmpty
           ? _detailedGrid
-          : _preciseGrid.isNotEmpty
-              ? _preciseGrid
-              : _largeGrid,
+          : _preciseGrid.isNotEmpty ? _preciseGrid : _largeGrid,
+      CityMode.port     => _portGrid.isNotEmpty ? _portGrid : _largeGrid,
     };
     if (grid.isEmpty) return null;
     return _nearestInGrid(grid, lat, lon);
@@ -130,6 +145,7 @@ class CityService {
       CityMode.detailed => _detailedGrid.isNotEmpty
           ? _detailedGrid
           : _preciseGrid.isNotEmpty ? _preciseGrid : _largeGrid,
+      CityMode.port     => _portGrid.isNotEmpty ? _portGrid : _largeGrid,
     };
     if (grid.isEmpty) return null;
     return _nearestInGrid(grid, lat, lon);

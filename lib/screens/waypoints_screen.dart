@@ -15,6 +15,7 @@ class WaypointsScreen extends StatefulWidget {
   final CoordFormat coordFormat;
   final LocatorType locatorType;
   final bool timeUtc;
+  final bool dayMode;
 
   const WaypointsScreen({
     super.key,
@@ -23,6 +24,7 @@ class WaypointsScreen extends StatefulWidget {
     required this.coordFormat,
     required this.locatorType,
     required this.timeUtc,
+    required this.dayMode,
   });
 
   @override
@@ -31,6 +33,19 @@ class WaypointsScreen extends StatefulWidget {
 
 class _WaypointsScreenState extends State<WaypointsScreen> {
   Timer? _ticker;
+
+  bool get _day => widget.dayMode;
+  Color get _cPrimary  => _day ? Colors.white               : const Color(0xFFCC3333);
+  Color get _cSecond   => _day ? const Color(0xFFCCCCCC)    : const Color(0xFF882222);
+  Color get _cTertiary => _day ? const Color(0xFF888888)    : const Color(0xFF551111);
+  Color get _cDim      => _day ? const Color(0xFF666666)    : const Color(0xFF441111);
+  Color get _cActive   => _day ? const Color(0xFFFF3333)    : const Color(0xFF882222);
+  Color get _cDistText => _day ? const Color(0xFFAAAAAA)    : const Color(0xFF661111);
+  Color _locColor(LocatorType t) => !_day
+      ? const Color(0xFF882222)
+      : t == LocatorType.maidenhead
+          ? const Color(0xFF55DD55)
+          : const Color(0xFFFFA726);
 
   @override
   void initState() {
@@ -51,10 +66,10 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
       backgroundColor: Colors.black,
       appBar: AppBar(
         backgroundColor: Colors.black,
-        foregroundColor: const Color(0xFFB0B0B0),
+        foregroundColor: _cTertiary,
         elevation: 0,
-        title: const Text('Waypoints',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: Color(0xFFB0B0B0))),
+        title: Text('Waypoints',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: _cTertiary)),
         actions: [
           IconButton(
             icon: const Icon(Icons.add_location_alt_outlined),
@@ -64,13 +79,13 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
         ],
       ),
       body: wpts.isEmpty
-          ? const Center(
+          ? Center(
               child: Padding(
-                padding: EdgeInsets.all(32),
+                padding: const EdgeInsets.all(32),
                 child: Text(
                   'No waypoints saved.\n\nTap MOB on the main screen to mark your current position, or use + to enter coordinates manually.',
                   textAlign: TextAlign.center,
-                  style: TextStyle(color: Colors.white38, fontSize: 15, height: 1.6),
+                  style: TextStyle(color: _cDim, fontSize: 15, height: 1.6),
                 ),
               ),
             )
@@ -98,21 +113,19 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
         ? maidenhead(wp.lat, wp.lon)
         : mgrs(wp.lat, wp.lon);
     final locLabel = widget.locatorType == LocatorType.maidenhead ? 'IARU' : 'MGRS';
-    final locColor = widget.locatorType == LocatorType.maidenhead
-        ? const Color(0xFF55DD55)
-        : const Color(0xFFFFA726);
+    final locColor = _locColor(widget.locatorType);
 
     return ListTile(
       tileColor: isActive ? const Color(0xFF1A0000) : Colors.transparent,
       leading: Icon(
         isActive ? Icons.navigation : Icons.location_on_outlined,
-        color: isActive ? const Color(0xFFFF3333) : const Color(0xFF777777),
+        color: isActive ? _cActive : _cDim,
         size: 22,
       ),
       title: Text(
         wp.name,
         style: TextStyle(
-          color: isActive ? const Color(0xFFFF3333) : Colors.white,
+          color: isActive ? _cActive : _cPrimary,
           fontWeight: isActive ? FontWeight.w700 : FontWeight.w400,
           fontSize: 16,
         ),
@@ -122,22 +135,22 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
         children: [
           Row(children: [
             Text(_fmtTimestamp(wp.timestamp, widget.timeUtc),
-                style: const TextStyle(color: Colors.white38, fontSize: 11)),
+                style: TextStyle(color: _cDim, fontSize: 11)),
             const SizedBox(width: 8),
             Text(
               formatElapsed(DateTime.now().difference(wp.timestamp)),
-              style: const TextStyle(
-                  color: Color(0xFF888888),
+              style: TextStyle(
+                  color: _cTertiary,
                   fontSize: 11,
                   fontWeight: FontWeight.w600),
             ),
           ]),
           const SizedBox(height: 2),
           Text('$latStr   $lonStr',
-              style: const TextStyle(
-                  color: Color(0xFFCCCCCC),
+              style: TextStyle(
+                  color: _cSecond,
                   fontSize: 11,
-                  fontFeatures: [FontFeature.tabularFigures()])),
+                  fontFeatures: const [FontFeature.tabularFigures()])),
           Row(children: [
             Text(locStr,
                 style: TextStyle(
@@ -146,8 +159,8 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
                     fontFeatures: const [FontFeature.tabularFigures()])),
             const SizedBox(width: 4),
             Text(locLabel,
-                style: const TextStyle(
-                    color: Colors.white30,
+                style: TextStyle(
+                    color: _cDim,
                     fontSize: 9,
                     fontWeight: FontWeight.w700,
                     letterSpacing: 1.0)),
@@ -157,8 +170,8 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
       isThreeLine: true,
       trailing: dist != null
           ? Text(dist,
-              style: const TextStyle(
-                  color: Colors.white54,
+              style: TextStyle(
+                  color: _cDistText,
                   fontSize: 14,
                   fontWeight: FontWeight.w600))
           : null,

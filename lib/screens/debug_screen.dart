@@ -20,6 +20,7 @@ class DebugScreen extends StatefulWidget {
   final LocatorType locatorType;
   final SpeedUnit speedUnit;
   final bool timeUtc;
+  final bool dayMode;
 
   const DebugScreen({
     super.key,
@@ -30,6 +31,7 @@ class DebugScreen extends StatefulWidget {
     required this.locatorType,
     required this.speedUnit,
     required this.timeUtc,
+    required this.dayMode,
   });
 
   @override
@@ -134,18 +136,18 @@ class _DebugScreenState extends State<DebugScreen> {
         backgroundColor: Colors.black,
         appBar: AppBar(
           backgroundColor: Colors.black,
-          foregroundColor: const Color(0xFF888888),
+          foregroundColor: _cHead,
           elevation: 0,
-          title: const Text('Debug',
+          title: Text('Debug',
               style: TextStyle(
                   fontSize: 15,
-                  color: Color(0xFF888888),
+                  color: _cHead,
                   letterSpacing: 3,
                   fontWeight: FontWeight.w400)),
-          bottom: const TabBar(
-            labelColor: Color(0xFFCCCCCC),
-            unselectedLabelColor: Color(0xFF666666),
-            indicatorColor: Color(0xFF888888),
+          bottom: TabBar(
+            labelColor: _cText,
+            unselectedLabelColor: _cDim,
+            indicatorColor: _cHead,
             labelStyle: TextStyle(fontSize: 12, letterSpacing: 1.5),
             tabs: [
               Tab(text: 'GPS'),
@@ -161,6 +163,16 @@ class _DebugScreenState extends State<DebugScreen> {
     );
   }
 
+  // ── Palette (day / night) ─────────────────────────────────────────────────
+  bool get _day => widget.dayMode;
+  Color get _cText   => _day ? Colors.white               : const Color(0xFFCC3333);
+  Color get _cLabel  => _day ? const Color(0xFF999999)    : const Color(0xFF882222);
+  Color get _cHead   => _day ? const Color(0xFF888888)    : const Color(0xFF882222);
+  Color get _cGood   => _day ? const Color(0xFF55DD55)    : const Color(0xFF882222);
+  Color get _cWarn   => _day ? const Color(0xFFFFD740)    : const Color(0xFF882222);
+  Color get _cBad    => _day ? const Color(0xFFFF5252)    : const Color(0xFFCC2222);
+  Color get _cDim    => _day ? const Color(0xFF888888)    : const Color(0xFF551111);
+
   // ── Shared helpers ────────────────────────────────────────────────────────
 
   static const _pad = EdgeInsets.fromLTRB(16, 0, 16, 32);
@@ -168,9 +180,9 @@ class _DebugScreenState extends State<DebugScreen> {
   Widget _section(String title) => Padding(
         padding: const EdgeInsets.fromLTRB(0, 20, 0, 4),
         child: Text(title.toUpperCase(),
-            style: const TextStyle(
+            style: TextStyle(
                 fontSize: 10,
-                color: Color(0xFF888888),
+                color: _cHead,
                 letterSpacing: 2.5,
                 fontWeight: FontWeight.w700)),
       );
@@ -184,7 +196,7 @@ class _DebugScreenState extends State<DebugScreen> {
         textAlign: TextAlign.right,
         style: TextStyle(
             fontSize: 12,
-            color: vc ?? Colors.white,
+            color: vc ?? _cText,
             fontFeatures:
                 mono ? const [FontFeature.tabularFigures()] : null));
     return InkWell(
@@ -196,8 +208,7 @@ class _DebugScreenState extends State<DebugScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(label,
-                style:
-                    const TextStyle(fontSize: 12, color: Color(0xFF999999))),
+                style: TextStyle(fontSize: 12, color: _cLabel)),
             const SizedBox(width: 16),
             Flexible(child: text),
           ],
@@ -228,10 +239,8 @@ class _DebugScreenState extends State<DebugScreen> {
     final decl = DeclinationService.instance.declination;
 
     Color accColor(double acc) => acc < 8
-        ? const Color(0xFF55DD55)
-        : acc < 25
-            ? const Color(0xFFFFD740)
-            : const Color(0xFFFF7043);
+        ? _cGood
+        : acc < 25 ? _cWarn : _cBad;
 
     return SingleChildScrollView(
       padding: _pad,
@@ -240,7 +249,7 @@ class _DebugScreenState extends State<DebugScreen> {
         _section('Fix'),
         _divider(),
         if (pos == null) ...[
-          _row('Status', 'No fix', vc: const Color(0xFFFF5252)),
+          _row('Status', 'No fix', vc: _cBad),
         ] else ...[
           _row('Horiz. accuracy', '± ${pos.accuracy.toStringAsFixed(1)} m',
               vc: accColor(pos.accuracy)),
@@ -250,23 +259,18 @@ class _DebugScreenState extends State<DebugScreen> {
               formatElapsed(now.difference(pos.timestamp))),
           _row('GPS timestamp', _fmtDt(pos.timestamp.toUtc())),
           _row('Mocked', pos.isMocked ? 'YES' : 'no',
-              vc: pos.isMocked ? const Color(0xFFFF5252) : null),
+              vc: pos.isMocked ? _cBad : null),
         ],
 
         // ── Satellites ─────────────────────────────────────────────────────
         _section('Satellites'),
         _divider(),
         if (_satTotal < 0)
-          _row('GNSS data', 'Awaiting…',
-              vc: const Color(0xFF888888))
+          _row('GNSS data', 'Awaiting…', vc: _cDim)
         else ...[
           _row('Total visible', '$_satTotal'),
           _row('Used in fix', '$_satUsed',
-              vc: _satUsed > 3
-                  ? const Color(0xFF55DD55)
-                  : _satUsed > 0
-                      ? const Color(0xFFFFD740)
-                      : const Color(0xFFFF5252)),
+              vc: _satUsed > 3 ? _cGood : _satUsed > 0 ? _cWarn : _cBad),
           ..._satCons.entries
               .toList()
               .sorted((a, b) => b.value.compareTo(a.value))
@@ -363,13 +367,12 @@ class _DebugScreenState extends State<DebugScreen> {
             pos != null && !pos.heading.isNaN && pos.heading >= 0
                 ? deg(pos.heading)
                 : '— (speed too low)',
-            vc: const Color(0xFF55DD55)),
+            vc: _cGood),
         _row('Compass (mag N)', deg(rawCompass),
-            vc: Colors.white),
-        _row('Compass (true N)', deg(_compassHeading),
-            vc: const Color(0xFFCCCCCC)),
+            vc: _cText),
+        _row('Compass (true N)', deg(_compassHeading)),
         _row('TRK smoothed (true N)', deg(track.bearing),
-            vc: const Color(0xFFFFD740)),
+            vc: _cWarn),
 
         // ── Declination ────────────────────────────────────────────────────
         _section('Magnetic field'),
@@ -396,6 +399,7 @@ class _DebugScreenState extends State<DebugScreen> {
           child: _TrackBufferCanvas(
             buffer: track.buffer,
             bearing: track.bearing,
+            dayMode: _day,
           ),
         ),
 
@@ -454,16 +458,16 @@ class _DebugScreenState extends State<DebugScreen> {
         _section('Locators'),
         _divider(),
         _row('Maidenhead 8 (1 km)', mh8,
-            vc: const Color(0xFF55DD55),
+            vc: _day ? const Color(0xFF55DD55) : const Color(0xFF882222),
             onTap: () => _copySnack(mh8)),
         _row('Maidenhead 6 (12 km)', mh6,
-            vc: const Color(0xFF69F0AE),
+            vc: _day ? const Color(0xFF69F0AE) : const Color(0xFF772222),
             onTap: () => _copySnack(mh6)),
         _row('Maidenhead 4 (field)', mh4,
-            vc: const Color(0xFF80CBC4),
+            vc: _day ? const Color(0xFF80CBC4) : const Color(0xFF662222),
             onTap: () => _copySnack(mh4)),
         _row('MGRS', mgrsStr,
-            vc: const Color(0xFFFFA726),
+            vc: _day ? const Color(0xFFFFA726) : const Color(0xFF882222),
             onTap: () => _copySnack(mgrsStr)),
 
         // ── URI / links ────────────────────────────────────────────────────
@@ -484,14 +488,16 @@ class _DebugScreenState extends State<DebugScreen> {
 
   List<Widget> _cityRows(double lat, double lon) {
     final labels = {
-      CityMode.large: 'Large (global)',
-      CityMode.precise: 'Precise (regional)',
+      CityMode.large:    'Large (global)',
+      CityMode.precise:  'Precise (regional)',
       CityMode.detailed: 'Detailed (local)',
+      CityMode.port:     'Port / Harbour',
     };
-    final colors = {
-      CityMode.large: const Color(0xFFFF9800),
-      CityMode.precise: const Color(0xFFFFD740),
+    final dayColors = {
+      CityMode.large:    const Color(0xFFFF9800),
+      CityMode.precise:  const Color(0xFFFFD740),
       CityMode.detailed: const Color(0xFFC6FF00),
+      CityMode.port:     const Color(0xFF29B6F6),
     };
     final rows = <Widget>[];
     for (final mode in CityMode.values) {
@@ -499,7 +505,8 @@ class _DebugScreenState extends State<DebugScreen> {
       final value = nc == null
           ? '—'
           : '${nc.city.name}  →  ${nc.bearingDeg.round()}°  ${formatDistance(nc.distKm)}';
-      rows.add(_row(labels[mode]!, value, vc: colors[mode]));
+      rows.add(_row(labels[mode]!, value,
+          vc: _day ? dayColors[mode] : const Color(0xFF882222)));
     }
     return rows;
   }
@@ -533,8 +540,13 @@ class _DebugScreenState extends State<DebugScreen> {
 class _TrackBufferCanvas extends StatelessWidget {
   final List<({double lat, double lon})> buffer;
   final double? bearing;
+  final bool dayMode;
 
-  const _TrackBufferCanvas({required this.buffer, this.bearing});
+  const _TrackBufferCanvas({
+    required this.buffer,
+    this.bearing,
+    required this.dayMode,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -547,10 +559,14 @@ class _TrackBufferCanvas extends StatelessWidget {
         borderRadius: BorderRadius.circular(4),
       ),
       child: buffer.length < 2
-          ? const Center(
+          ? Center(
               child: Text('No data',
-                  style: TextStyle(color: Color(0xFF333333), fontSize: 12)))
-          : CustomPaint(painter: _BufferPainter(buffer, bearing)),
+                  style: TextStyle(
+                      color: dayMode
+                          ? const Color(0xFF333333)
+                          : const Color(0xFF441111),
+                      fontSize: 12)))
+          : CustomPaint(painter: _BufferPainter(buffer, bearing, dayMode)),
     );
   }
 }
@@ -558,8 +574,9 @@ class _TrackBufferCanvas extends StatelessWidget {
 class _BufferPainter extends CustomPainter {
   final List<({double lat, double lon})> buffer;
   final double? bearing;
+  final bool dayMode;
 
-  const _BufferPainter(this.buffer, this.bearing);
+  const _BufferPainter(this.buffer, this.bearing, this.dayMode);
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -589,9 +606,14 @@ class _BufferPainter extends CustomPainter {
     final scale = (min(size.width, size.height) / 2 - pad) / maxR;
     Offset s(Offset p) => Offset(cx + p.dx * scale, cy + p.dy * scale);
 
+    final dotNew  = dayMode ? const Color(0xFF00BCD4) : const Color(0xFFCC2222);
+    final dotOld  = dayMode ? const Color(0xFF2A3A2A) : const Color(0xFF2A0808);
+    final arrow   = dayMode ? const Color(0xFF55DD55) : const Color(0xFFCC2222);
+    final nMark   = dayMode ? const Color(0xFF333333) : const Color(0xFF441111);
+
     // Trail lines
     final linePaint = Paint()
-      ..color = const Color(0xFF2A2A2A)
+      ..color = dayMode ? const Color(0xFF2A2A2A) : const Color(0xFF1A0808)
       ..strokeWidth = 1.5
       ..style = PaintingStyle.stroke;
     for (int i = 1; i < pts.length; i++) {
@@ -601,57 +623,39 @@ class _BufferPainter extends CustomPainter {
     // Dots — oldest dim/small → newest bright/large
     for (int i = 0; i < pts.length; i++) {
       final t = i / (pts.length - 1).toDouble();
-      final colour =
-          Color.lerp(const Color(0xFF2A3A2A), const Color(0xFF00BCD4), t)!;
-      canvas.drawCircle(s(pts[i]), 2.5 + t * 3.5, Paint()..color = colour);
+      canvas.drawCircle(
+          s(pts[i]), 2.5 + t * 3.5,
+          Paint()..color = Color.lerp(dotOld, dotNew, t)!);
     }
 
-    // Current position (newest = centre)
+    // Current position glow + dot
     canvas.drawCircle(Offset(cx, cy), 7,
-        Paint()..color = const Color(0xFF00BCD4).withValues(alpha: 0.25));
-    canvas.drawCircle(Offset(cx, cy), 4,
-        Paint()..color = const Color(0xFF00BCD4));
+        Paint()..color = dotNew.withValues(alpha: 0.25));
+    canvas.drawCircle(Offset(cx, cy), 4, Paint()..color = dotNew);
 
-    // Bearing arrow (green, from centre in direction of travel)
+    // Bearing arrow from centre in direction of travel
     if (bearing != null) {
       final bRad = bearing! * pi / 180;
       final arrowLen = min(cx, cy) - pad - 4;
       final tipX = cx + sin(bRad) * arrowLen;
       final tipY = cy - cos(bRad) * arrowLen;
-      canvas.drawLine(
-        Offset(cx, cy),
-        Offset(tipX, tipY),
-        Paint()
-          ..color = const Color(0xFF55DD55)
-          ..strokeWidth = 1.5,
-      );
-      // Arrowhead
+      final ap = Paint()..color = arrow..strokeWidth = 1.5;
+      canvas.drawLine(Offset(cx, cy), Offset(tipX, tipY), ap);
       const aw = 5.0;
-      final ax = bRad + pi * 0.8;
-      final ay = bRad - pi * 0.8;
-      canvas.drawLine(
-        Offset(tipX, tipY),
-        Offset(tipX + sin(ax) * aw, tipY - cos(ax) * aw),
-        Paint()..color = const Color(0xFF55DD55)..strokeWidth = 1.5,
-      );
-      canvas.drawLine(
-        Offset(tipX, tipY),
-        Offset(tipX + sin(ay) * aw, tipY - cos(ay) * aw),
-        Paint()..color = const Color(0xFF55DD55)..strokeWidth = 1.5,
-      );
+      for (final a in [bRad + pi * 0.8, bRad - pi * 0.8]) {
+        canvas.drawLine(Offset(tipX, tipY),
+            Offset(tipX + sin(a) * aw, tipY - cos(a) * aw), ap);
+      }
     }
 
-    // North indicator (small N at top edge)
-    final nPaint = Paint()
-      ..color = const Color(0xFF333333)
-      ..strokeWidth = 1.0;
-    canvas.drawLine(
-        Offset(cx, pad - 4), Offset(cx, pad + 8), nPaint);
+    // North tick
+    canvas.drawLine(Offset(cx, pad - 4), Offset(cx, pad + 8),
+        Paint()..color = nMark..strokeWidth = 1.0);
   }
 
   @override
   bool shouldRepaint(_BufferPainter old) =>
-      old.buffer != buffer || old.bearing != bearing;
+      old.buffer != buffer || old.bearing != bearing || old.dayMode != dayMode;
 }
 
 // Extension to sort MapEntry lists

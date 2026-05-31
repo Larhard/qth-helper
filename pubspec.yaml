@@ -32,3 +32,4 @@ flutter:
     - assets/cities.tsv
     - assets/cities_precise.tsv
     - assets/cities_detailed.tsv
+    - assets/ports.tsv
