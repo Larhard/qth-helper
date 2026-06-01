@@ -20,6 +20,9 @@ import '../widgets/arrow_widget.dart';
 import 'debug_screen.dart';
 import 'waypoints_screen.dart';
 
+/// Which waypoint card the current hold gesture is targeting.
+enum _WptHoldTarget { emergency, nav }
+
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
@@ -495,6 +498,9 @@ class _HomeScreenState extends State<HomeScreen>
     setState(() => _headingArrowMode = next);
     saveHeadingArrowMode(next);
     HapticFeedback.lightImpact();
+    _showSnack(next == HeadingArrowMode.windRose
+        ? 'Wind rose — rotating compass, dots show POI directions'
+        : 'Arrow mode — bearing arrows with direction dots');
   }
 
   void _toggleHeadingSourceMode() {
@@ -505,12 +511,19 @@ class _HomeScreenState extends State<HomeScreen>
     saveHeadingSourceMode(next);
     HapticFeedback.lightImpact();
     _showSnack(next == HeadingSourceMode.auto
-        ? 'Heading: AUTO (GPS → TRK → MAG by speed)'
-        : 'Heading: MAG primary (TRK / GPS secondary)');
+        ? 'AUTO — GPS when fast · TRK when moving · MAG fallback'
+        : 'MAG primary — TRK / GPS secondary');
   }
 
-  void _startClear() {
-    if (WaypointService.instance.emergency == null) return;
+  // Which waypoint card the hold gesture is currently targeting.
+  _WptHoldTarget? _holdTarget;
+
+  void _startClear([_WptHoldTarget target = _WptHoldTarget.emergency]) {
+    final hasItem = target == _WptHoldTarget.emergency
+        ? WaypointService.instance.emergency != null
+        : WaypointService.instance.active != null;
+    if (!hasItem) return;
+    _holdTarget = target;
     _holding = true;
     _holdWatch..reset()..start();
     if (!_holdTicker.isActive) _holdTicker.start();
@@ -541,7 +554,13 @@ class _HomeScreenState extends State<HomeScreen>
     _holdTicker.stop();
     setState(() => _clearProgress = 0.0);
     HapticFeedback.heavyImpact();
-    _clearEmergency();
+    if (_holdTarget == _WptHoldTarget.nav) {
+      WaypointService.instance.deactivate();
+      if (mounted) setState(() {});
+    } else {
+      _clearEmergency();
+    }
+    _holdTarget = null;
   }
 
   // ── GPS-on-lock toggle ────────────────────────────────────────────────────
@@ -705,51 +724,20 @@ class _HomeScreenState extends State<HomeScreen>
         .catchError((_) {});
   }
 
-  Future<void> _togglePocketLock() async {
+  void _togglePocketLock() {
     final next = !_pocketLockEnabled;
+    setState(() => _pocketLockEnabled = next);
+    GetStorage().write('pocket_lock', next);
+    _syncPocketLock();
     HapticFeedback.lightImpact();
-    try {
-      final res = await _screenChannel
-          .invokeMapMethod<String, dynamic>('setPocketLock', {'enabled': next});
-      final adminLaunched = res?['adminLaunched'] as bool? ?? false;
-      final adminActive   = res?['adminActive']   as bool? ?? false;
-      final enabled       = res?['enabled']       as bool? ?? false;
-
-      if (adminLaunched) {
-        // Android has opened the Device Admin activation screen.
-        _showSnack(
-          'Device Admin required for screen lock.\n'
-          'Tap "Activate" to enable the feature.',
-        );
-        // State will be updated in _checkPocketLockOnResume.
-      } else {
-        setState(() => _pocketLockEnabled = enabled);
-        GetStorage().write('pocket_lock', enabled);
-        _showSnack(enabled
-            ? (adminActive
-                ? 'Pocket lock ON — screen locks after 5 s in pocket'
-                : 'Pocket lock ON — screen dims in pocket (grant Device Admin for full lock)')
-            : 'Pocket lock OFF');
-      }
-    } catch (_) {}
+    _showSnack(next
+        ? 'Pocket lock ON — screen dims after 5 s in pocket'
+        : 'Pocket lock OFF');
   }
 
   Future<void> _checkPocketLockOnResume() async {
-    try {
-      final res = await _screenChannel
-          .invokeMapMethod<String, dynamic>('getPocketLockStatus');
-      final enabled = res?['enabled'] as bool? ?? false;
-      if (enabled != _pocketLockEnabled) {
-        setState(() => _pocketLockEnabled = enabled);
-        GetStorage().write('pocket_lock', enabled);
-        if (enabled) {
-          final adminActive = res?['adminActive'] as bool? ?? false;
-          _showSnack(adminActive
-              ? 'Pocket lock ON — Device Admin granted'
-              : 'Pocket lock ON');
-        }
-      }
-    } catch (_) {}
+    // Sync persisted state back to Android in case it was reset by a crash.
+    _syncPocketLock();
   }
 
   void _showSnack(String msg) {
@@ -1070,8 +1058,23 @@ class _HomeScreenState extends State<HomeScreen>
                     _citySectionLandscape(_nearestCity!),
                     _dividerCompact(),
                   ],
-                  const Spacer(),
-                  _wptSectionLandscape(pos),
+                  Expanded(
+                    child: Align(
+                      alignment: Alignment.bottomLeft,
+                      child: Padding(
+                        padding: const EdgeInsets.only(bottom: 4),
+                        child: ConstrainedBox(
+                          constraints: BoxConstraints(
+                            maxHeight: MediaQuery.of(context).size.height * 0.52,
+                          ),
+                          child: SingleChildScrollView(
+                            reverse: true,
+                            child: _wptSectionLandscape(pos),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -1085,12 +1088,12 @@ class _HomeScreenState extends State<HomeScreen>
       _dayMode ? const Color(0xFF1A1A1A) : const Color(0xFF2A0000);
 
   Widget _divider() => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 14),
+        padding: const EdgeInsets.symmetric(vertical: 10),
         child: Divider(color: _cDivider, height: 1),
       );
 
   Widget _dividerCompact() => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 8),
+        padding: const EdgeInsets.symmetric(vertical: 6),
         child: Divider(color: _cDivider, height: 1),
       );
 
@@ -1149,21 +1152,32 @@ class _HomeScreenState extends State<HomeScreen>
           width: 80,
           height: 80,
           child: Stack(alignment: Alignment.center, children: [
-            // Relative-bearing ring — drawn behind everything.
-            Positioned.fill(child: CustomPaint(
-              painter: _BearingRingPainter(
-                primaryHeading: primary,
-                markers: markers,
-                dayMode: _dayMode,
-                windRoseMode: windRose,
-                secondaryBearing: windRose ? secBearing : null,
-                secondaryColor: _secondaryHeadingColor,
-              ),
-            )),
-            // Secondary arrow — only in arrow mode; in wind-rose mode it is
-            // shown as a dash on the ring inside _BearingRingPainter.
-            // Secondary arrow (only in arrow mode; wind-rose shows it separately)
-            if (!windRose)
+            // Wind-rose: live ring via ValueListenableBuilder so secondary dash
+            // repaints at compass rate even when GPS is the primary source.
+            // Arrow mode: static ring (headed by GPS setState).
+            if (windRose)
+              ValueListenableBuilder<double>(
+                valueListenable: _compassNotifier,
+                builder: (_, compassBearing, __) {
+                  final sec = _headingSourceMode == HeadingSourceMode.auto
+                      ? compassBearing
+                      : (_track.bearing ?? _lastValidGpsHeading);
+                  return Positioned.fill(child: CustomPaint(
+                    painter: _BearingRingPainter(
+                      primaryHeading: primary, markers: markers, dayMode: _dayMode,
+                      windRoseMode: true, secondaryBearing: sec,
+                      secondaryColor: _secondaryHeadingColor,
+                    ),
+                  ));
+                },
+              )
+            else
+              Positioned.fill(child: CustomPaint(
+                painter: _BearingRingPainter(
+                  primaryHeading: primary, markers: markers, dayMode: _dayMode),
+              )),
+            // Arrow mode only — both arrows. Wind-rose shows no arrows.
+            if (!windRose) ...[
               ValueListenableBuilder<double>(
                 valueListenable: _compassNotifier,
                 builder: (_, compassBearing, __) {
@@ -1171,29 +1185,14 @@ class _HomeScreenState extends State<HomeScreen>
                       ? compassBearing
                       : (_track.bearing ?? _lastValidGpsHeading);
                   if (sb == null) return const SizedBox.shrink();
-                  // Day: dim via Opacity; Night: already dim red, no extra Opacity needed.
                   return _dayMode
                       ? Opacity(opacity: 0.38,
                           child: ArrowWidget(bearingDeg: sb, color: _secondaryHeadingColor, size: 80))
                       : ArrowWidget(bearingDeg: sb, color: _secondaryHeadingColor, size: 80);
                 },
               ),
-            // Wind-rose: show secondary as full arrow, primary omitted (the rose IS the reference).
-            if (windRose && secBearing != null)
-              ValueListenableBuilder<double>(
-                valueListenable: _compassNotifier,
-                builder: (_, compassBearing, __) {
-                  final sb = _headingSourceMode == HeadingSourceMode.auto
-                      ? compassBearing
-                      : (_track.bearing ?? _lastValidGpsHeading);
-                  if (sb == null) return const SizedBox.shrink();
-                  return _dayMode
-                      ? Opacity(opacity: 0.5,
-                          child: ArrowWidget(bearingDeg: sb, color: _secondaryHeadingColor, size: 80))
-                      : ArrowWidget(bearingDeg: sb, color: _secondaryHeadingColor, size: 80);
-                },
-              ),
-            if (!windRose) ArrowWidget(bearingDeg: primary, color: color, size: 80),
+              ArrowWidget(bearingDeg: primary, color: color, size: 80),
+            ],
           ]),
         ),
       ),
@@ -1246,17 +1245,28 @@ class _HomeScreenState extends State<HomeScreen>
             width: 80,
             height: 80,
             child: Stack(alignment: Alignment.center, children: [
-              Positioned.fill(child: CustomPaint(
-                painter: _BearingRingPainter(
-                  primaryHeading: primary,
-                  markers: markers,
-                  dayMode: _dayMode,
-                  windRoseMode: windRose,
-                  secondaryBearing: windRose ? secBearing : null,
-                  secondaryColor: _secondaryHeadingColor,
-                ),
-              )),
-              if (!windRose)
+              if (windRose)
+                ValueListenableBuilder<double>(
+                  valueListenable: _compassNotifier,
+                  builder: (_, compassBearing, __) {
+                    final sec = _headingSourceMode == HeadingSourceMode.auto
+                        ? compassBearing
+                        : (_track.bearing ?? _lastValidGpsHeading);
+                    return Positioned.fill(child: CustomPaint(
+                      painter: _BearingRingPainter(
+                        primaryHeading: primary, markers: markers, dayMode: _dayMode,
+                        windRoseMode: true, secondaryBearing: sec,
+                        secondaryColor: _secondaryHeadingColor,
+                      ),
+                    ));
+                  },
+                )
+              else
+                Positioned.fill(child: CustomPaint(
+                  painter: _BearingRingPainter(
+                    primaryHeading: primary, markers: markers, dayMode: _dayMode),
+                )),
+              if (!windRose) ...[
                 ValueListenableBuilder<double>(
                   valueListenable: _compassNotifier,
                   builder: (_, compassBearing, __) {
@@ -1270,21 +1280,8 @@ class _HomeScreenState extends State<HomeScreen>
                         : ArrowWidget(bearingDeg: sb, color: _secondaryHeadingColor, size: 80);
                   },
                 ),
-              if (windRose && secBearing != null)
-                ValueListenableBuilder<double>(
-                  valueListenable: _compassNotifier,
-                  builder: (_, compassBearing, __) {
-                    final sb = _headingSourceMode == HeadingSourceMode.auto
-                        ? compassBearing
-                        : (_track.bearing ?? _lastValidGpsHeading);
-                    if (sb == null) return const SizedBox.shrink();
-                    return _dayMode
-                        ? Opacity(opacity: 0.5,
-                            child: ArrowWidget(bearingDeg: sb, color: _secondaryHeadingColor, size: 80))
-                        : ArrowWidget(bearingDeg: sb, color: _secondaryHeadingColor, size: 80);
-                  },
-                ),
-              if (!windRose) ArrowWidget(bearingDeg: primary, color: color, size: 80),
+                ArrowWidget(bearingDeg: primary, color: color, size: 80),
+              ],
             ]),
           ),
         ),
@@ -1737,51 +1734,45 @@ class _HomeScreenState extends State<HomeScreen>
   Widget _navWptCard(Position pos, Waypoint wp, {required bool portrait}) {
     final b = bearing(pos.latitude, pos.longitude, wp.lat, wp.lon);
     final d = haversineKm(pos.latitude, pos.longitude, wp.lat, wp.lon);
-    // Day: deep orange-red — clearly distinct from city oranges/amber/lime.
-    // Night: medium red (consistent with palette).
     final navColor = _dayMode ? const Color(0xFFFF6E40) : const Color(0xFF992222);
     final navSub   = _dayMode ? const Color(0xFFFF8F00) : const Color(0xFF661111);
     final arrowSz  = portrait ? 50.0 : 44.0;
     final dataFz   = portrait ? 22.0 : 20.0;
+    // Same hold-to-deactivate animation as MOB, targeting _WptHoldTarget.nav.
     return Padding(
       padding: const EdgeInsets.all(3),
-      child: Container(
-        decoration: BoxDecoration(
-          border: Border.all(
-            color: navColor.withValues(alpha: 0.25), width: 1),
-          borderRadius: BorderRadius.circular(6),
-        ),
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
-          child: Row(children: [
-            ArrowWidget(bearingDeg: b, color: navColor, size: arrowSz),
-            const SizedBox(width: 12),
-            Expanded(child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(wp.name,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(fontSize: 14, color: navSub, letterSpacing: 1.2)),
-                Row(children: [
-                  Text('${b.round()}°',
-                      style: TextStyle(fontSize: dataFz, color: navSub,
-                          fontFeatures: const [FontFeature.tabularFigures()])),
-                  const SizedBox(width: 12),
-                  Text(formatDistanceUnit(d, _speedUnit),
-                      style: TextStyle(fontSize: dataFz, color: navColor,
-                          fontWeight: FontWeight.w600,
-                          fontFeatures: const [FontFeature.tabularFigures()])),
-                ]),
-              ],
-            )),
-            GestureDetector(
-              onLongPress: () { WaypointService.instance.deactivate(); setState(() {}); },
-              child: Padding(
-                padding: const EdgeInsets.all(6),
-                child: Icon(Icons.close, size: 18, color: navSub),
-              ),
-            ),
-          ]),
+      child: Listener(
+        onPointerDown: (_) => _startClear(_WptHoldTarget.nav),
+        onPointerUp: (_) => _cancelClear(),
+        onPointerCancel: (_) => _cancelClear(),
+        child: CustomPaint(
+          painter: _WptBorderPainter(_holdTarget == _WptHoldTarget.nav ? _clearProgress : 0.0,
+              dayMode: _dayMode),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+            child: Row(children: [
+              ArrowWidget(bearingDeg: b, color: navColor, size: arrowSz),
+              const SizedBox(width: 12),
+              Expanded(child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(wp.name,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(fontSize: 14, color: navSub, letterSpacing: 1.2)),
+                  Row(children: [
+                    Text('${b.round()}°',
+                        style: TextStyle(fontSize: dataFz, color: navSub,
+                            fontFeatures: const [FontFeature.tabularFigures()])),
+                    const SizedBox(width: 12),
+                    Text(formatDistanceUnit(d, _speedUnit),
+                        style: TextStyle(fontSize: dataFz, color: navColor,
+                            fontWeight: FontWeight.w600,
+                            fontFeatures: const [FontFeature.tabularFigures()])),
+                  ]),
+                ],
+              )),
+            ]),
+          ),
         ),
       ),
     );
@@ -1929,15 +1920,6 @@ class _HomeScreenState extends State<HomeScreen>
                 left: _locStr(wp.lat, wp.lon),
                 right: formatElapsed(DateTime.now().difference(wp.timestamp)),
                 fontSize: coordFontSize,
-              ),
-              SizedBox(height: portrait ? 6 : 4),
-              Align(
-                alignment: Alignment.centerRight,
-                child: Text('HOLD 3s TO DEACTIVATE',
-                    style: TextStyle(
-                        fontSize: 10,
-                        color: _cWptHint,
-                        letterSpacing: 1.5)),
               ),
             ],
           ),
@@ -2556,12 +2538,15 @@ class _BearingRingPainter extends CustomPainter {
     final cy = size.height / 2;
 
     final ringBase = dayMode ? Colors.white : const Color(0xFF882222);
-    final ringColor = ringBase.withValues(alpha: dayMode ? 0.12 : 0.18);
+    // Wind-rose needs to be visible in bright light → higher opacity, wider stroke.
+    final ringAlpha = windRoseMode ? (dayMode ? 0.45 : 0.55) : (dayMode ? 0.12 : 0.18);
+    final ringColor = ringBase.withValues(alpha: ringAlpha);
     final tickColor = ringBase.withValues(alpha: dayMode ? 0.30 : 0.40);
 
     // ── Ring ─────────────────────────────────────────────────────────────
     canvas.drawCircle(Offset(cx, cy), _ringR,
-        Paint()..color = ringColor..style = PaintingStyle.stroke..strokeWidth = 1.0);
+        Paint()..color = ringColor..style = PaintingStyle.stroke
+               ..strokeWidth = windRoseMode ? 1.5 : 1.0);
 
     // ── Wind-rose mode: rotating cardinal/intercardinal tick marks ────────
     if (windRoseMode) {
@@ -2570,9 +2555,9 @@ class _BearingRingPainter extends CustomPainter {
         final rel   = (cardBearing - primaryHeading + 360) % 360;
         final angle = rel * _piOver180 - _halfPi;
         final isCardinal = i % 2 == 0;
-        final tLen  = isCardinal ? 7.0 : 4.0;
-        final tW    = isCardinal ? 1.8 : 1.0;
-        final alpha = isCardinal ? (dayMode ? 0.45 : 0.55) : (dayMode ? 0.22 : 0.28);
+        final tLen  = isCardinal ? 8.0 : 5.0;
+        final tW    = isCardinal ? 2.2 : 1.2;
+        final alpha = isCardinal ? (dayMode ? 0.65 : 0.75) : (dayMode ? 0.35 : 0.45);
         canvas.drawLine(
           Offset(cx + _ringR * _cos(angle), cy + _ringR * _sin(angle)),
           Offset(cx + (_ringR - tLen) * _cos(angle), cy + (_ringR - tLen) * _sin(angle)),
@@ -2586,9 +2571,9 @@ class _BearingRingPainter extends CustomPainter {
             text: TextSpan(
               text: 'N',
               style: TextStyle(
-                fontSize: 8,
-                fontWeight: FontWeight.w700,
-                color: ringBase.withValues(alpha: dayMode ? 0.55 : 0.65),
+                fontSize: 11,
+                fontWeight: FontWeight.w900,
+                color: ringBase.withValues(alpha: dayMode ? 0.85 : 0.92),
               ),
             ),
             textDirection: TextDirection.ltr,
@@ -2598,16 +2583,26 @@ class _BearingRingPainter extends CustomPainter {
         }
       }
 
-      // Secondary bearing: short inward dash (clearly distinct from arrows and dots)
+      // Secondary bearing: prominent inward dash (clearly distinct from dots)
       if (secondaryBearing != null) {
         final rel   = (secondaryBearing! - primaryHeading + 360) % 360;
         final angle = rel * _piOver180 - _halfPi;
+        // Outer glow for visibility
         canvas.drawLine(
-          Offset(cx + _ringR * _cos(angle), cy + _ringR * _sin(angle)),
-          Offset(cx + (_ringR - 9) * _cos(angle), cy + (_ringR - 9) * _sin(angle)),
+          Offset(cx + (_ringR + 2) * _cos(angle), cy + (_ringR + 2) * _sin(angle)),
+          Offset(cx + (_ringR - 11) * _cos(angle), cy + (_ringR - 11) * _sin(angle)),
           Paint()
-            ..color = secondaryColor.withValues(alpha: 0.55)
-            ..strokeWidth = 2.5
+            ..color = secondaryColor.withValues(alpha: 0.25)
+            ..strokeWidth = 7.0
+            ..strokeCap = StrokeCap.round,
+        );
+        // Main dash
+        canvas.drawLine(
+          Offset(cx + (_ringR + 1) * _cos(angle), cy + (_ringR + 1) * _sin(angle)),
+          Offset(cx + (_ringR - 10) * _cos(angle), cy + (_ringR - 10) * _sin(angle)),
+          Paint()
+            ..color = secondaryColor.withValues(alpha: 0.85)
+            ..strokeWidth = 3.5
             ..strokeCap = StrokeCap.round,
         );
       }

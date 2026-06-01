@@ -133,16 +133,18 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
         highlightColor: inkColor,
       ),
       child: ListTile(
-      tileColor: isEmergency
+      tileColor: (isEmergency || isActive)
           ? const Color(0xFF1A0000)
-          : isActive ? const Color(0xFF1A0800) : Colors.transparent,
+          : Colors.transparent,
       leading: Icon(
         isEmergency
             ? Icons.warning_rounded
             : isActive ? Icons.navigation : Icons.location_on_outlined,
         color: isEmergency
             ? const Color(0xFFFF3333)
-            : isActive ? const Color(0xFFFF6E40) : _cDim,
+            : isActive
+                ? (_day ? const Color(0xFFFF6E40) : const Color(0xFFFF3333))
+                : _cDim,
         size: 22,
       ),
       title: Text(
@@ -150,7 +152,9 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
         style: TextStyle(
           color: isEmergency
               ? const Color(0xFFFF3333)
-              : isActive ? const Color(0xFFFF6E40) : _cPrimary,
+              : isActive
+                  ? (_day ? const Color(0xFFFF6E40) : const Color(0xFFFF3333))
+                  : _cPrimary,
           fontWeight: (isEmergency || isActive) ? FontWeight.w700 : FontWeight.w400,
           fontSize: 16,
         ),

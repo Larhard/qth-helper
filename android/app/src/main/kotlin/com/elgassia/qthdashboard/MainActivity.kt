@@ -1,10 +1,7 @@
 package com.elgassia.qthdashboard
 
 import android.annotation.SuppressLint
-import android.app.admin.DeviceAdminReceiver
-import android.app.admin.DevicePolicyManager
 import android.content.BroadcastReceiver
-import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
@@ -31,45 +28,37 @@ class MainActivity : FlutterActivity(), SensorEventListener {
     // ── Pocket-lock / proximity detection ─────────────────────────────────────
     //
     // When pocketLockEnabled is true and the phone is detected near a surface
-    // (pocket) for 5 consecutive seconds, the screen is locked:
-    //   • Device Admin active  → DevicePolicyManager.lockNow()  (true screen lock)
-    //   • Device Admin absent  → screenBrightness = 0.0f        (visual black + timeout)
+    // (pocket) for 5 consecutive seconds:
+    //   • screenBrightness = 0.0f  → window appears black instantly
+    //   • FLAG_NOT_TOUCHABLE       → digitiser blocked (no accidental button presses)
+    //   • FLAG_KEEP_SCREEN_ON cleared → backlight eventually off via system timeout
     //
-    // The proximity sensor is registered ONLY when pocket-lock is enabled and
-    // the phone is not charging — zero sensor overhead otherwise.
+    // We deliberately do NOT use DevicePolicyManager.lockNow(). Calling lockNow()
+    // from a Device Admin triggers Android's "strong authentication required" policy,
+    // which prevents fingerprint unlock and forces PIN entry — dangerous while driving.
+    // The screenBrightness approach achieves the same practical result safely: the
+    // screen is visually off and touch-blocked, but the keyguard remains in its normal
+    // state so biometrics work immediately when the phone is taken out of the pocket.
     //
-    // Default: feature is disabled.  User enables via the SCR toggle in the UI,
-    // which triggers the Device Admin activation prompt if not yet granted.
+    // The proximity sensor is registered ONLY when pocket-lock is enabled and the
+    // phone is not charging — zero sensor overhead otherwise.
 
     private val sm by lazy { getSystemService(SENSOR_SERVICE) as SensorManager }
-    private val dpm by lazy { getSystemService(DEVICE_POLICY_SERVICE) as DevicePolicyManager }
-    private val adminComp by lazy { ComponentName(this, LockReceiver::class.java) }
 
     private var proxSensor: Sensor? = null
     private var proxRegistered = false
-    private var isNearby = false           // current proximity reading
-    private var pocketLockEnabled = false  // persisted via Flutter / GetStorage
-    private var pendingEnable = false      // set while waiting for admin grant
+    private var isNearby = false
+    private var pocketLockEnabled = false
     private val pocketHandler = Handler(Looper.getMainLooper())
 
     // Fired after 5 s of sustained pocket contact.
     private val sleepRunnable = Runnable {
         if (!isNearby || !pocketLockEnabled || isCharging()) return@Runnable
-        if (isAdminActive()) {
-            dpm.lockNow()   // true screen lock — keyguard blocks all touch input
-        } else {
-            // Fallback: black out the window visually.
-            // FLAG_NOT_TOUCHABLE disables the digitizer for this window so pocket
-            // fabric cannot trigger any buttons behind the black screen.
-            // The flag is cleared in updateScreenKeepOn() when the phone is removed
-            // from the pocket.
-            window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-            window.addFlags(WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE)
-            setScreenBrightness(0.0f)
-        }
+        // Black out and block touch — no lockNow() to avoid forced-PIN behaviour.
+        window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        window.addFlags(WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE)
+        setScreenBrightness(0.0f)
     }
-
-    private fun isAdminActive() = dpm.isAdminActive(adminComp)
 
     // Register proximity only when pocket-lock is on and useful (not charging).
     private fun syncProximity() {
@@ -160,22 +149,6 @@ class MainActivity : FlutterActivity(), SensorEventListener {
         updateScreenKeepOn()
     }
 
-    // Called when the user returns from the Device Admin activation screen.
-    override fun onResume() {
-        super.onResume()
-        if (pendingEnable) {
-            pendingEnable = false
-            if (isAdminActive()) {
-                // Admin was granted — complete the enable.
-                pocketLockEnabled = true
-                syncProximity()
-                updateScreenKeepOn()
-            }
-            // Flutter polls getPocketLockStatus on resume (didChangeAppLifecycleState)
-            // so no need to push from here.
-        }
-    }
-
     override fun onDestroy() {
         unregisterReceiver(chargingReceiver)
         if (proxRegistered) sm.unregisterListener(this, proxSensor)
@@ -188,47 +161,22 @@ class MainActivity : FlutterActivity(), SensorEventListener {
         super.configureFlutterEngine(flutterEngine)
 
         // ── Pocket-lock / screen control ─────────────────────────────────────
+        // No Device Admin involved — see class-level comment.
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "qth_helper/screen")
             .setMethodCallHandler { call, result ->
                 when (call.method) {
                     "setPocketLock" -> {
                         val enable = call.argument<Boolean>("enabled") ?: false
-                        if (enable && !isAdminActive()) {
-                            // Launch Device Admin activation prompt.
-                            pendingEnable = true
-                            val intent = Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN).apply {
-                                putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, adminComp)
-                                putExtra(
-                                    DevicePolicyManager.EXTRA_ADD_EXPLANATION,
-                                    "QTH Dashboard needs Device Administrator access to lock " +
-                                    "the screen when the phone is detected in a pocket."
-                                )
-                            }
-                            startActivity(intent)
-                            result.success(mapOf(
-                                "enabled"       to false,
-                                "adminActive"   to false,
-                                "adminLaunched" to true
-                            ))
-                        } else {
-                            pocketLockEnabled = enable
-                            if (!enable) {
-                                pocketHandler.removeCallbacks(sleepRunnable)
-                                isNearby = false
-                            }
-                            syncProximity()
-                            updateScreenKeepOn()
-                            result.success(mapOf(
-                                "enabled"       to pocketLockEnabled,
-                                "adminActive"   to isAdminActive(),
-                                "adminLaunched" to false
-                            ))
+                        pocketLockEnabled = enable
+                        if (!enable) {
+                            pocketHandler.removeCallbacks(sleepRunnable)
+                            isNearby = false
                         }
+                        syncProximity()
+                        updateScreenKeepOn()
+                        result.success(mapOf("enabled" to pocketLockEnabled))
                     }
-                    "getPocketLockStatus" -> result.success(mapOf(
-                        "enabled"     to pocketLockEnabled,
-                        "adminActive" to isAdminActive()
-                    ))
+                    "getPocketLockStatus" -> result.success(mapOf("enabled" to pocketLockEnabled))
                     else -> result.notImplemented()
                 }
             }
@@ -259,11 +207,6 @@ class MainActivity : FlutterActivity(), SensorEventListener {
             .setStreamHandler(SensorStreamHandler(this))
     }
 }
-
-// ── Device Admin receiver ─────────────────────────────────────────────────────
-// A minimal DeviceAdminReceiver subclass — just the policy declaration in XML
-// (res/xml/device_admin_receiver.xml) is what really matters.
-class LockReceiver : DeviceAdminReceiver()
 
 // ── GNSS stream ───────────────────────────────────────────────────────────────
 

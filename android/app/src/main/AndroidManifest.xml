@@ -41,23 +41,6 @@
             android:name="flutterEmbedding"
             android:value="2" />
 
-        <!--
-          Device Admin receiver for pocket-lock feature.
-          Only the force-lock policy is declared (see res/xml/device_admin_receiver.xml).
-          The user must explicitly activate this via Settings — the app triggers the
-          system prompt when the user enables the pocket-lock toggle.
-        -->
-        <receiver
-            android:name=".LockReceiver"
-            android:permission="android.permission.BIND_DEVICE_ADMIN"
-            android:exported="true">
-            <meta-data
-                android:name="android.app.device_admin"
-                android:resource="@xml/device_admin_receiver" />
-            <intent-filter>
-                <action android:name="android.app.action.DEVICE_ADMIN_ENABLED" />
-            </intent-filter>
-        </receiver>
 
         <!-- Merge with geolocator's ForegroundLocationService declaration to
              guarantee android:foregroundServiceType="location" is present.
