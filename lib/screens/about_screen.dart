@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../utils/units.dart';
 
 /// About / Legal screen.
 ///
@@ -18,19 +19,18 @@ class AboutScreen extends StatelessWidget {
 
   const AboutScreen({super.key, required this.dayMode});
 
-  // ── Colour palette (mirrors waypoints_screen and home_screen) ────────────
-  Color get _cPrimary   => dayMode ? Colors.white                : const Color(0xFFCC3333);
-  Color get _cSecondary => dayMode ? const Color(0xFFCCCCCC)     : const Color(0xFF882222);
-  Color get _cTertiary  => dayMode ? const Color(0xFF888888)     : const Color(0xFF551111);
-  Color get _cDim       => dayMode ? const Color(0xFF666666)     : const Color(0xFF441111);
-  Color get _cIcon      => dayMode ? const Color(0xFF555555)     : const Color(0xFF441111);
-  Color get _cDivider   => dayMode ? const Color(0xFF1A1A1A)     : const Color(0xFF2A0000);
-  Color get _cBtnFg     => dayMode ? const Color(0xFFAAAAAA)     : const Color(0xFF882222);
-  Color get _cBtnBorder => dayMode ? const Color(0xFF333333)     : const Color(0xFF440000);
-
-  // Disclaimer box colours
-  Color get _cWarnBorder => dayMode ? const Color(0xFF2A2A00) : const Color(0xFF2A0000);
-  Color get _cWarnBg     => dayMode ? const Color(0xFF0A0A00) : const Color(0xFF0A0000);
+  // ── Colour palette — uses the same kD*/kN* constants as every other screen ─
+  Color get _cPrimary   => dayMode ? kDFg0  : kN1;
+  Color get _cSecondary => dayMode ? kDFg2  : kN2;
+  Color get _cTertiary  => dayMode ? kDFg3  : kN3;
+  Color get _cDim       => dayMode ? kDFg4  : kN4;
+  Color get _cIcon      => dayMode ? kDFoc  : kN4;
+  Color get _cDivider   => dayMode ? kDDiv  : kNDiv;
+  Color get _cBtnFg     => dayMode ? kDFg3  : kN2;
+  Color get _cBtnBorder => dayMode ? kDBrd  : kNDiv;
+  // Disclaimer warning box
+  Color get _cWarnBorder => dayMode ? kDAmbs.withValues(alpha: 0.4) : kNDiv;
+  Color get _cWarnBg     => dayMode ? kDSheetBg : kNSheet;
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -121,16 +121,36 @@ class AboutScreen extends StatelessWidget {
           ),
           const SizedBox(height: 12),
           OutlinedButton.icon(
-            onPressed: () => showLicensePage(
-              context: context,
-              applicationName: 'QTH Dashboard',
-              applicationVersion: 'v1.1.0',
-              applicationLegalese:
-                  '© 2026 Bartłomiej Puget <larhard@gmail.com>\n\n'
-                  'City data © GeoNames (CC BY 4.0)\n'
-                  'Port data: NGA WPI (public domain) + '
-                  '© GeoNames (CC BY 4.0) + '
-                  '© OpenStreetMap contributors (ODbL)',
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => Theme(
+                data: ThemeData.dark().copyWith(
+                  scaffoldBackgroundColor: dayMode ? kDSnackBg : Colors.black,
+                  appBarTheme: AppBarTheme(
+                    backgroundColor: dayMode ? kDSnackBg : Colors.black,
+                    foregroundColor: dayMode ? kDFg0 : kN1,
+                    scrolledUnderElevation: 0,
+                    surfaceTintColor: Colors.transparent,
+                    elevation: 0,
+                  ),
+                  colorScheme: ColorScheme.dark(
+                    surface: dayMode ? kDSnackBg : Colors.black,
+                    onSurface: dayMode ? kDFg1 : kN2,
+                    primary: dayMode ? kDFg0 : kN1,
+                    surfaceTint: Colors.transparent,
+                  ),
+                ),
+                child: const LicensePage(
+                  applicationName: 'QTH Dashboard',
+                  applicationVersion: 'v1.1.0',
+                  applicationLegalese:
+                      '© 2026 Bartłomiej Puget <larhard@gmail.com>\n\n'
+                      'City data © GeoNames (CC BY 4.0)\n'
+                      'Port data: NGA WPI (public domain) + '
+                      '© GeoNames (CC BY 4.0) + '
+                      '© OpenStreetMap contributors (ODbL)',
+                ),
+              )),
             ),
             icon: const Icon(Icons.article_outlined, size: 18),
             label: const Text('Open Source Licences'),

@@ -62,9 +62,23 @@ const kDPort  = Color(0xFF00E5FF); // port name, live-lock badge
 const kDPortL = Color(0xFF00ACC1); // port sub-text, live-lock label
 
 // UI chrome (on the app's dark-panel surface)
-const kDDiv   = Color(0xFF1A1A1A); // dividers, separators
-const kDBrd   = Color(0xFF333333); // input / tile borders
-const kDFoc   = Color(0xFF555555); // focused input border
+const kDDiv    = Color(0xFF1A1A1A); // dividers, separators
+const kDBrd    = Color(0xFF333333); // input / tile borders
+const kDFoc    = Color(0xFF555555); // focused input border
+const kDSheetBg= Color(0xFF111111); // modal / bottom-sheet background
+const kDSnackBg= Color(0xFF1C1C1C); // floating snackbar background
+
+// Maidenhead locator precision tiers (debug / locator display only)
+const kDGpsM6  = Color(0xFF69F0AE); // 6-char Maidenhead (~12 km)
+const kDGpsM4  = Color(0xFF80CBC4); // 4-char Maidenhead (field)
+
+// Emergency card border ring — shown during hold-to-clear animation
+const kDEmgRing    = Color(0xFF4A1515); // day: active progress ring
+const kDEmgRingDim = Color(0xFF3D1212); // day: idle ring
+const kNEmgRing    = Color(0xFF2A0A0A); // night: active progress ring
+const kNEmgRingDim = Color(0xFF1A0808); // night: idle ring
+const kDEmgArc     = Color(0xFFFF6666); // day: arc animation end colour
+const kNEmgArc     = Color(0xFFAA3333); // night: arc animation end colour
 
 enum SpeedUnit { metric, nautical, imperial }
 

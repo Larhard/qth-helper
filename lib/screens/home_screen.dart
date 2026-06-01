@@ -578,8 +578,8 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   void _showSettingSnack(String message) {
-    final bg = _dayMode ? const Color(0xFF1C1C1C) : kNBg;
-    final fg = _dayMode ? Colors.white70           : kN2;
+    final bg = _dayMode ? kDSnackBg : kNBg;
+    final fg = _dayMode ? kDFg1     : kN2;
     ScaffoldMessenger.of(context).clearSnackBars();
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
       content: Text(message, style: TextStyle(color: fg, fontSize: 13, height: 1.5)),
@@ -692,8 +692,8 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   void _showSnack(String msg, {Duration duration = const Duration(milliseconds: 2000)}) {
-    final bg = _dayMode ? const Color(0xFF1C1C1C) : kNBg;
-    final fg = _dayMode ? Colors.white60           : kN2;
+    final bg = _dayMode ? kDSnackBg : kNBg;
+    final fg = _dayMode ? kDFg1     : kN2;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
       content: Text(msg, style: TextStyle(color: fg, fontSize: 13), maxLines: 2),
       backgroundColor: bg,
@@ -766,7 +766,7 @@ class _HomeScreenState extends State<HomeScreen>
                 height: 80,
                 child: Stack(alignment: Alignment.center, children: [
                   ArrowWidget(bearingDeg: _compassHeading,
-                      color: _dayMode ? Colors.white : const Color(0xFF882222), size: 80),
+                      color: _dayMode ? kDFg0 : kN2, size: 80),
                 ]),
               ),
               const SizedBox(height: 6),
@@ -774,18 +774,18 @@ class _HomeScreenState extends State<HomeScreen>
                   style: TextStyle(
                       fontSize: 52,
                       fontWeight: FontWeight.w900,
-                      color: _dayMode ? Colors.white : const Color(0xFF882222),
+                      color: _dayMode ? kDFg0 : kN2,
                       height: 1.0)),
               Text('MAG',
                   style: TextStyle(
-                      color: _dayMode ? Colors.white38 : const Color(0xFF551111),
+                      color: _dayMode ? kDFg3 : kN3,
                       fontSize: 12, letterSpacing: 2.5)),
               const SizedBox(height: 32),
             ],
-            const CircularProgressIndicator(color: Colors.white24),
+            CircularProgressIndicator(color: _dayMode ? kDFg4 : kN4),
             const SizedBox(height: 20),
-            const Text('Acquiring GPS…',
-                style: TextStyle(color: Colors.white38, fontSize: 18)),
+            Text('Acquiring GPS…',
+                style: TextStyle(color: _dayMode ? kDFg3 : kN3, fontSize: 18)),
           ]),
         ),
       );
@@ -797,7 +797,7 @@ class _HomeScreenState extends State<HomeScreen>
             padding: const EdgeInsets.all(32),
             child: Text(msg,
                 textAlign: TextAlign.center,
-                style: const TextStyle(color: Colors.white54, fontSize: 18)),
+                style: TextStyle(color: _dayMode ? kDFg2 : kN2, fontSize: 18)),
           ),
         ),
       );
@@ -829,9 +829,7 @@ class _HomeScreenState extends State<HomeScreen>
                       child: Icon(
                         Icons.pin_drop_outlined,
                         size: 22,
-                        color: _dayMode
-                            ? const Color(0xFF888888)
-                            : const Color(0xFF661111),
+                        color: _dayMode ? kDFg3 : kN3,
                       ),
                     ),
                   ),
@@ -860,7 +858,7 @@ class _HomeScreenState extends State<HomeScreen>
                       child: Icon(
                         Icons.bug_report_outlined,
                         size: 22,
-                        color: _dayMode ? const Color(0xFF444444) : const Color(0xFF441111),
+                        color: _dayMode ? kDFoc : kN4,
                       ),
                     ),
                   ),
@@ -885,9 +883,7 @@ class _HomeScreenState extends State<HomeScreen>
                       child: Icon(
                         _dayMode ? Icons.nightlight_round : Icons.wb_sunny_outlined,
                         size: 22,
-                        color: _dayMode
-                            ? const Color(0xFF888888)
-                            : const Color(0xFF882222),
+                        color: _dayMode ? kDFg3 : kN2,
                       ),
                     ),
                   ),
@@ -973,29 +969,36 @@ class _HomeScreenState extends State<HomeScreen>
             ),
           ),
           const SizedBox(width: 12),
-          // ── Right: city then waypoints/MOB (60 % width) ─────────────
+          // ── Right: city + nav (scrollable) / MOB pinned at bottom ────
           Flexible(
             flex: 6,
             fit: FlexFit.tight,
             child: Container(
               decoration: BoxDecoration(
-                border: Border(
-                  left: BorderSide(color: _cDivider, width: 1),
-                ),
+                border: Border(left: BorderSide(color: _cDivider, width: 1)),
               ),
               padding: const EdgeInsets.only(left: 14),
-              child: SingleChildScrollView(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (_nearestCity != null) ...[
-                      _citySectionLandscape(_nearestCity!),
-                      _dividerCompact(),
-                    ],
-                    _wptSectionLandscape(pos),
-                  ],
-                ),
+              // Column: scrollable top (city + nav) + fixed bottom (MOB).
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: SingleChildScrollView(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (_nearestCity != null) ...[
+                            _citySectionLandscape(_nearestCity!),
+                            _dividerCompact(),
+                          ],
+                          _navWptSectionLandscape(pos),
+                        ],
+                      ),
+                    ),
+                  ),
+                  _mobSectionLandscape(pos),
+                ],
               ),
             ),
           ),
@@ -1481,7 +1484,7 @@ class _HomeScreenState extends State<HomeScreen>
     HapticFeedback.lightImpact();
     showModalBottomSheet(
       context: context,
-      backgroundColor: const Color(0xFF111111),
+      backgroundColor: _dayMode ? kDSheetBg : kNSheet,
       shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(12))),
       isScrollControlled: true,
@@ -1570,14 +1573,16 @@ class _HomeScreenState extends State<HomeScreen>
       onLongPress: () => _showCityDetails(nc),
       behavior: HitTestBehavior.opaque,
       child: Row(children: [
-        ArrowWidget(bearingDeg: nc.bearingDeg, color: color, size: 56),
-        const SizedBox(width: 14),
+        ArrowWidget(bearingDeg: nc.bearingDeg, color: color, size: 44),
+        const SizedBox(width: 10),
         Expanded(
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Row(children: [
               Flexible(
                 child: LayoutBuilder(builder: (_, bc) {
-                  final fs = _fitFontSize(nc.city.name, bc.maxWidth, maxSize: 28, minSize: 11);
+                  // 24px for short names; _fitFontSize shrinks dynamically so long
+                  // names still fit in 2 lines without overflowing the landscape layout.
+                  final fs = _fitFontSize(nc.city.name, bc.maxWidth, maxSize: 24, minSize: 10);
                   return Text(nc.city.name,
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
@@ -1585,22 +1590,20 @@ class _HomeScreenState extends State<HomeScreen>
                           fontSize: fs, fontWeight: FontWeight.w700, color: color));
                 }),
               ),
-              const SizedBox(width: 8),
+              const SizedBox(width: 6),
               Text(nc.city.country,
-                  style: TextStyle(
-                      fontSize: 14,
-                      color: subColor.withValues(alpha: 0.7))),
+                  style: TextStyle(fontSize: 12, color: subColor.withValues(alpha: 0.7))),
             ]),
             Row(children: [
               Text('${nc.bearingDeg.round()}°',
                   style: TextStyle(
-                      fontSize: 20,
+                      fontSize: 16,
                       color: subColor,
                       fontFeatures: const [FontFeature.tabularFigures()])),
-              const SizedBox(width: 14),
+              const SizedBox(width: 10),
               Text(formatDistanceUnit(nc.distKm, _speedUnit),
                   style: TextStyle(
-                      fontSize: 20,
+                      fontSize: 16,
                       color: color,
                       fontWeight: FontWeight.w600,
                       fontFeatures: const [FontFeature.tabularFigures()])),
@@ -1618,8 +1621,8 @@ class _HomeScreenState extends State<HomeScreen>
     final d = haversineKm(pos.latitude, pos.longitude, wp.lat, wp.lon);
     final navColor = _dayMode ? kDNav : kN1;
     final navSub   = _dayMode ? kDNavL : kN3;
-    final arrowSz  = portrait ? 50.0 : 44.0;
-    final dataFz   = portrait ? 22.0 : 20.0;
+    final arrowSz  = portrait ? 50.0 : 36.0;
+    final dataFz   = portrait ? 22.0 : 16.0;
     // Same hold-to-deactivate animation as MOB, targeting _WptHoldTarget.nav.
     return Padding(
       padding: const EdgeInsets.all(3),
@@ -1631,10 +1634,12 @@ class _HomeScreenState extends State<HomeScreen>
           painter: _WptBorderPainter(_holdTarget == _WptHoldTarget.nav ? _clearProgress : 0.0,
               dayMode: _dayMode),
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+            padding: portrait
+                ? const EdgeInsets.fromLTRB(12, 8, 12, 8)
+                : const EdgeInsets.fromLTRB(10, 5, 10, 5),
             child: Row(children: [
               ArrowWidget(bearingDeg: b, color: navColor, size: arrowSz),
-              const SizedBox(width: 12),
+              const SizedBox(width: 10),
               Expanded(child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -1688,48 +1693,50 @@ class _HomeScreenState extends State<HomeScreen>
     ]);
   }
 
-  Widget _wptSectionLandscape(Position pos) {
+  // Nav waypoint only — used in the scrollable top portion of the landscape column.
+  Widget _navWptSectionLandscape(Position pos) {
     final nav = WaypointService.instance.active;
-    final mob = WaypointService.instance.emergency;
+    if (nav == null) return const SizedBox.shrink();
     return Column(mainAxisSize: MainAxisSize.min, children: [
-      if (nav != null) ...[
-        _navWptCard(pos, nav, portrait: false),
-        const SizedBox(height: 6),
-      ],
-      if (mob != null)
-        _wptCard(pos, mob, portrait: false)
-      else
-        SizedBox(
-          width: double.infinity,
-          height: 70,
-          child: ElevatedButton(
-            onPressed: _addWaypoint,
-            style: ElevatedButton.styleFrom(
-              backgroundColor: _cMobBg, foregroundColor: _cMobText,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
-              elevation: 0,
-            ),
-            child: const Text('MOB',
-                style: TextStyle(fontSize: 36, fontWeight: FontWeight.w900, letterSpacing: 4)),
-          ),
-        ),
+      _navWptCard(pos, nav, portrait: false),
+      const SizedBox(height: 4),
     ]);
+  }
+
+  // MOB card or button — pinned to the bottom of the landscape right column.
+  Widget _mobSectionLandscape(Position pos) {
+    final mob = WaypointService.instance.emergency;
+    if (mob != null) return _wptCard(pos, mob, portrait: false);
+    return SizedBox(
+      width: double.infinity,
+      height: 62,
+      child: ElevatedButton(
+        onPressed: _addWaypoint,
+        style: ElevatedButton.styleFrom(
+          backgroundColor: _cMobBg, foregroundColor: _cMobText,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+          elevation: 0,
+        ),
+        child: const Text('MOB',
+            style: TextStyle(fontSize: 30, fontWeight: FontWeight.w900, letterSpacing: 4)),
+      ),
+    );
   }
 
   Widget _wptCard(Position pos, Waypoint wp, {required bool portrait}) {
     final b = bearing(pos.latitude, pos.longitude, wp.lat, wp.lon);
     final d = haversineKm(pos.latitude, pos.longitude, wp.lat, wp.lon);
-    final arrowSize = portrait ? 60.0 : 56.0;
-    final nameFontSize = portrait ? 20.0 : 18.0;
-    final dataFontSize = portrait ? 22.0 : 20.0;
-    final coordFontSize = portrait ? 14.0 : 14.0;
+    final arrowSize = portrait ? 60.0 : 46.0;
+    final nameFontSize = portrait ? 20.0 : 14.0;
+    final dataFontSize = portrait ? 22.0 : 17.0;
+    final coordFontSize = portrait ? 14.0 : 11.0;
     final padding = portrait
         ? const EdgeInsets.fromLTRB(14, 12, 14, 14)
-        : const EdgeInsets.fromLTRB(12, 8, 12, 8);
+        : const EdgeInsets.fromLTRB(10, 5, 10, 5);
 
     // Outer Padding ensures the border ring is never clipped by parent bounds.
     return Padding(
-      padding: const EdgeInsets.all(3),
+      padding: EdgeInsets.all(portrait ? 3 : 2),
       child: Listener(
       onPointerDown: (_) => _startClear(),
       onPointerUp: (_) => _cancelClear(),
@@ -1785,7 +1792,7 @@ class _HomeScreenState extends State<HomeScreen>
                   ),
                 ],
               ),
-              SizedBox(height: portrait ? 6 : 4),
+              SizedBox(height: portrait ? 6 : 2),
               // ── [lat | date], [lon | time], [locator | elapsed] ─────────
               // All three rows share the same color palette so the right
               // column reads as part of the card rather than secondary info.
@@ -1983,8 +1990,8 @@ class _CityDetailSheet extends StatelessWidget {
   }
 
   SnackBar _snack(String text, {Duration duration = const Duration(milliseconds: 1200)}) {
-    final bg = dayMode ? const Color(0xFF1C1C1C) : kNBg;
-    final fg = dayMode ? Colors.white60           : kN2;
+    final bg = dayMode ? kDSnackBg : kNBg;
+    final fg = dayMode ? kDFg1     : kN2;
     return SnackBar(
       content: Text(text, style: TextStyle(color: fg, fontSize: 13),
           maxLines: 1, overflow: TextOverflow.ellipsis),
@@ -2168,9 +2175,9 @@ class _CityDetailSheet extends StatelessWidget {
       initialChildSize: 0.55,
       maxChildSize: 0.92,
       builder: (_, ctrl) => Container(
-        decoration: const BoxDecoration(
-          color: Color(0xFF111111),
-          borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
+        decoration: BoxDecoration(
+          color: dayMode ? kDSheetBg : kNSheet,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
         ),
         child: Column(children: [
           // Drag handle row with copy-all button
@@ -2183,7 +2190,7 @@ class _CityDetailSheet extends StatelessWidget {
                   child: Container(
                     width: 36, height: 4,
                     decoration: BoxDecoration(
-                        color: const Color(0xFF333333),
+                        color: dayMode ? kDBrd : kNDiv,
                         borderRadius: BorderRadius.circular(2))),
                 ),
               ),
@@ -2299,10 +2306,10 @@ class _CityDetailSheet extends StatelessWidget {
                             padding: const EdgeInsets.symmetric(
                                 horizontal: 8, vertical: 3),
                             decoration: BoxDecoration(
-                              color: const Color(0xFF1A1A1A),
+                              color: dayMode ? kDDiv : kNBg,
                               borderRadius: BorderRadius.circular(4),
                               border: Border.all(
-                                  color: const Color(0xFF333333), width: 1)),
+                                  color: dayMode ? kDBrd : kNDiv, width: 1)),
                             child: Text(f.replaceAll('_', ' '),
                                 style: TextStyle(
                                     fontSize: 11, color: _cLabel)),
@@ -2342,8 +2349,8 @@ class _WptBorderPainter extends CustomPainter {
         ..style = PaintingStyle.stroke
         ..strokeWidth = _trackWidth
         ..color = progress > 0
-            ? (dayMode ? const Color(0xFF4A1515) : const Color(0xFF2A0A0A))
-            : (dayMode ? const Color(0xFF3D1212) : const Color(0xFF1A0808)),
+            ? (dayMode ? kDEmgRing    : kNEmgRing)
+            : (dayMode ? kDEmgRingDim : kNEmgRingDim),
     );
 
     if (progress <= 0) return;
@@ -2358,8 +2365,8 @@ class _WptBorderPainter extends CustomPainter {
         ..style = PaintingStyle.stroke
         ..strokeWidth = _arcWidth
         ..color = dayMode
-            ? Color.lerp(const Color(0xFFFF3333), const Color(0xFFFF6666), progress)!
-            : Color.lerp(const Color(0xFF882222), const Color(0xFFAA3333), progress)!
+            ? Color.lerp(kDEmg, kDEmgArc, progress)!
+            : Color.lerp(kN2,   kNEmgArc, progress)!
         ..strokeCap = StrokeCap.round,
     );
   }
@@ -2396,7 +2403,7 @@ class _BearingRingPainter extends CustomPainter {
     required this.dayMode,
     this.windRoseMode = false,
     this.secondaryBearing,
-    this.secondaryColor = Colors.white,
+    this.secondaryColor = kDFg0,
   });
 
   static const _ringR   = 37.5;
@@ -2412,7 +2419,7 @@ class _BearingRingPainter extends CustomPainter {
     final cx = size.width  / 2;
     final cy = size.height / 2;
 
-    final ringBase = dayMode ? Colors.white : const Color(0xFF882222);
+    final ringBase = dayMode ? kDFg0 : kN2;
     // Wind-rose needs to be visible in bright light → higher opacity, wider stroke.
     final ringAlpha = windRoseMode ? (dayMode ? 0.45 : 0.55) : (dayMode ? 0.12 : 0.18);
     final ringColor = ringBase.withValues(alpha: ringAlpha);
@@ -2503,7 +2510,7 @@ class _BearingRingPainter extends CustomPainter {
       // Triangle: base on ring at top, tip inward — indicates heading direction.
       // cx at top = (cx, cy - _ringR). tip 9px inward from ring.
       final hColor = dayMode
-          ? Colors.white.withValues(alpha: 0.85)
+          ? kDFg0.withValues(alpha: 0.85)
           : kN1.withValues(alpha: 0.85);
       final hPath = Path()
         ..moveTo(cx, cy - (_ringR - 9))       // tip (inward)
@@ -2529,7 +2536,7 @@ class _BearingRingPainter extends CustomPainter {
       if (m.sizeScale > 1.3) {
         canvas.drawCircle(Offset(dx, dy), _dotR * m.sizeScale + 1.5,
             Paint()
-              ..color = (dayMode ? Colors.white : kN0).withValues(alpha: 0.65)
+              ..color = (dayMode ? kDFg0 : kN0).withValues(alpha: 0.65)
               ..style = PaintingStyle.stroke
               ..strokeWidth = 1.5);
       }
@@ -2547,5 +2554,6 @@ class _BearingRingPainter extends CustomPainter {
       old.dayMode != dayMode ||
       old.windRoseMode != windRoseMode ||
       old.markers.length != markers.length ||
-      old.secondaryBearing != secondaryBearing;
+      old.secondaryBearing != secondaryBearing ||
+      old.secondaryColor != secondaryColor;
 }

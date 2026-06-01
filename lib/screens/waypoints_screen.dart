@@ -123,17 +123,14 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
     final locLabel = widget.locatorType == LocatorType.maidenhead ? 'IARU' : 'MGRS';
     final locColor = _locColor(widget.locatorType);
 
-    final inkColor = (_day ? Colors.white : const Color(0xFF882222))
-        .withValues(alpha: 0.12);
+    final inkColor = (_day ? kDFg0 : kN2).withValues(alpha: 0.12);
     return Theme(
       data: Theme.of(context).copyWith(
         splashColor: inkColor,
         highlightColor: inkColor,
       ),
       child: ListTile(
-      tileColor: (isEmergency || isActive)
-          ? const Color(0xFF1A0000)
-          : Colors.transparent,
+      tileColor: (isEmergency || isActive) ? kNBg : Colors.transparent,
       leading: Icon(
         isEmergency
             ? Icons.warning_rounded
@@ -223,7 +220,7 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      backgroundColor: widget.dayMode ? const Color(0xFF111111) : kNSheet,
+      backgroundColor: widget.dayMode ? kDSheetBg : kNSheet,
       shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(12))),
       builder: (_) => _WptEditSheet(
@@ -348,16 +345,16 @@ class _WptEditSheetState extends State<_WptEditSheet> {
   // ── Night-safe colour helpers ─────────────────────────────────────────────
   bool get _day => widget.dayMode;
   Color get _cText    => _day ? kDFg0   : kN1;
-  Color get _cLabel   => _day ? Colors.white38 : kN2;   // opacity-based label on dark surface
-  Color get _cHint    => _day ? Colors.white24 : kN3;   // opacity-based hint
+  Color get _cLabel   => _day ? kDFg3 : kN2;
+  Color get _cHint    => _day ? kDFg4 : kN3;
   Color get _cBorder  => _day ? kDBrd   : kNDiv;
   Color get _cFocus   => _day ? kDFoc   : kN2;
   Color get _cSymBg   => _day ? const Color(0xFF1A2A1A) : kNBg; // green-tinted form bg
   Color get _cSymFg   => _day ? kDGps   : kN1;
   Color get _cSaveBg  => _day ? const Color(0xFF1A3A1A) : kNBg; // green-tinted save bg
-  Color get _cCancel  => _day ? Colors.white38 : kN2;
+  Color get _cCancel  => _day ? kDFg3 : kN2;
   Color get _cDlgBg   => _day ? kDDiv   : kNBg;
-  Color get _cDlgBody => _day ? Colors.white54 : kN2;
+  Color get _cDlgBody => _day ? kDFg2 : kN2;
 
   void _confirmDelete() {
     Navigator.pop(context);
@@ -380,7 +377,7 @@ class _WptEditSheetState extends State<_WptEditSheet> {
               widget.onSaved();
             },
             style: TextButton.styleFrom(
-                foregroundColor: const Color(0xFFFF3333)),
+                foregroundColor: kDEmg),
             child: const Text('Delete'),
           ),
         ],
@@ -472,7 +469,7 @@ class _WptEditSheetState extends State<_WptEditSheet> {
               TextButton(
                 onPressed: _confirmDelete,
                 style: TextButton.styleFrom(
-                    foregroundColor: const Color(0xFFFF3333)),
+                    foregroundColor: kDEmg),
                 child: const Text('Delete'),
               ),
             const Spacer(),
@@ -503,15 +500,15 @@ class _WptEditSheetState extends State<_WptEditSheet> {
       errorText: errorText,
       labelStyle: TextStyle(color: _cLabel),
       hintStyle: TextStyle(color: _cHint),
-      errorStyle: const TextStyle(color: Color(0xFFFF3333)),
+      errorStyle: TextStyle(color: _day ? kDEmg : kN1),
       enabledBorder: UnderlineInputBorder(
           borderSide: BorderSide(color: _cBorder)),
       focusedBorder: UnderlineInputBorder(
           borderSide: BorderSide(color: _cFocus)),
-      errorBorder: const UnderlineInputBorder(
-          borderSide: BorderSide(color: Color(0xFFFF3333))),
-      focusedErrorBorder: const UnderlineInputBorder(
-          borderSide: BorderSide(color: Color(0xFFFF3333))),
+      errorBorder: UnderlineInputBorder(
+          borderSide: BorderSide(color: _day ? kDEmg : kN1)),
+      focusedErrorBorder: UnderlineInputBorder(
+          borderSide: BorderSide(color: _day ? kDEmg : kN1)),
     );
   }
 }

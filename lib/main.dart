@@ -102,6 +102,24 @@ class QthHelperApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       theme: ThemeData.dark().copyWith(
         scaffoldBackgroundColor: Colors.black,
+        // Disable Material 3's scroll-under surface tint — it turns AppBars and
+        // bottom sheets grey when content scrolls beneath them, which clashes
+        // with the app's custom day/night colour system.
+        appBarTheme: const AppBarTheme(
+          backgroundColor: Colors.black,
+          scrolledUnderElevation: 0,
+          surfaceTintColor: Colors.transparent,
+          elevation: 0,
+        ),
+        bottomSheetTheme: const BottomSheetThemeData(
+          backgroundColor: Colors.black,
+          surfaceTintColor: Colors.transparent,
+          elevation: 0,
+        ),
+        colorScheme: const ColorScheme.dark(
+          surface: Colors.black,
+          surfaceTint: Colors.transparent,
+        ),
       ),
       home: const HomeScreen(),
     );
