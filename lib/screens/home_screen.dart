@@ -75,6 +75,12 @@ class _HomeScreenState extends State<HomeScreen>
   // rebuilds when the heading hasn't changed enough to matter visually.
   double _lastRenderedCompassHeading = -1.0;
 
+  // ── Screen always-on override ─────────────────────────────────────────────
+  // When true, pocket detection is disabled — useful if the proximity sensor
+  // is unreliable. Persisted across sessions.
+  static const _screenChannel = MethodChannel('qth_helper/screen');
+  bool _screenAlwaysOn = GetStorage().read<bool>('screen_always_on') ?? false;
+
   // ── Speed unit ────────────────────────────────────────────────────────────
   SpeedUnit _speedUnit = loadSpeedUnit();
 
@@ -200,6 +206,7 @@ class _HomeScreenState extends State<HomeScreen>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _holdTicker = createTicker(_onHoldTick);
+    _syncScreenAlwaysOn();
     _toggleTicker = createTicker(_onToggleTick);
     _gpsOnLock = GetStorage().read<bool>('gps_on_lock') ?? false;
     _staleTimer = Timer.periodic(const Duration(seconds: 1), _onStaleTick);
@@ -612,6 +619,20 @@ class _HomeScreenState extends State<HomeScreen>
   static String _fmtTime(DateTime dt, bool utc) {
     final d = utc ? dt.toUtc() : dt.toLocal();
     return '${d.hour.toString().padLeft(2,'0')}:${d.minute.toString().padLeft(2,'0')}:${d.second.toString().padLeft(2,'0')}';
+  }
+
+  void _syncScreenAlwaysOn() {
+    _screenChannel
+        .invokeMethod('setAlwaysOn', {'value': _screenAlwaysOn})
+        .catchError((_) {});
+  }
+
+  void _toggleScreenAlwaysOn() {
+    final next = !_screenAlwaysOn;
+    setState(() => _screenAlwaysOn = next);
+    GetStorage().write('screen_always_on', next);
+    _syncScreenAlwaysOn();
+    HapticFeedback.lightImpact();
   }
 
   void _cycleSpeedUnit() {
@@ -1080,9 +1101,8 @@ class _HomeScreenState extends State<HomeScreen>
                 ),
               ),
             ),
-            // Transparent spacer matching TRK line height so bar doesn't
-            // visually float away from the text it belongs to.
-            SizedBox(height: trkFontSize * 1.4),
+            // Spacer covering TRK + screen indicator lines.
+            SizedBox(height: trkFontSize * 2.9),
           ],
         ),
         const SizedBox(width: 8),
@@ -1123,6 +1143,32 @@ class _HomeScreenState extends State<HomeScreen>
                   fontSize: trkFontSize,
                   color: _cText3,
                   letterSpacing: 1.5),
+            ),
+            // Screen pocket-sleep override — long-press to toggle.
+            // Sun = screen always on (override active, pocket ignored).
+            // Bedtime = pocket detection active (default).
+            GestureDetector(
+              onLongPress: _toggleScreenAlwaysOn,
+              behavior: HitTestBehavior.opaque,
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                Icon(
+                  _screenAlwaysOn ? Icons.light_mode : Icons.bedtime_outlined,
+                  size: trkFontSize,
+                  color: _screenAlwaysOn
+                      ? (_dayMode ? const Color(0xFF55DD55) : const Color(0xFFCC2222))
+                      : _cText3,
+                ),
+                const SizedBox(width: 3),
+                Text(
+                  _screenAlwaysOn ? 'ON' : 'AUTO',
+                  style: TextStyle(
+                      fontSize: trkFontSize * 0.85,
+                      color: _screenAlwaysOn
+                          ? (_dayMode ? const Color(0xFF55DD55) : const Color(0xFFCC2222))
+                          : _cText3,
+                      letterSpacing: 1.0),
+                ),
+              ]),
             ),
           ],
         ),

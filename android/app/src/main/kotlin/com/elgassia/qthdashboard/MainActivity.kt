@@ -1,6 +1,7 @@
 package com.elgassia.qthdashboard
 
 import android.annotation.SuppressLint
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
@@ -22,11 +23,94 @@ import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodChannel
 
-class MainActivity : FlutterActivity() {
+class MainActivity : FlutterActivity(), SensorEventListener {
+
+    // ── Pocket / proximity detection ──────────────────────────────────────────
+    //
+    // Logic: FLAG_KEEP_SCREEN_ON is active when ANY of these is true:
+    //   • phone is charging                   (driving / sailing at powered helm)
+    //   • phone is NOT near the proximity sensor  (held in hand, on dash, etc.)
+    //   • Flutter "always-on" override is active  (broken-sensor fallback)
+    //
+    // Only when all three conditions are false (not charging, covered, no override)
+    // does the flag get cleared — and only after a 5-second sustained delay, so
+    // brief pocket bumps are ignored.
+    //
+    // The proximity sensor is registered only when pocket detection is meaningful
+    // (not charging, override off), keeping it completely idle the rest of the time.
+
+    private val sm by lazy { getSystemService(SENSOR_SERVICE) as SensorManager }
+    private var proxSensor: Sensor? = null
+    private var proxRegistered = false
+    private var isNearby = false           // current proximity state
+    private var screenAlwaysOn = false     // Flutter override (disable pocket sleep)
+    private val pocketHandler = Handler(Looper.getMainLooper())
+
+    // Applied only after the phone has been continuously covered for 5 s.
+    private val sleepRunnable = Runnable {
+        if (isNearby && !isCharging() && !screenAlwaysOn) {
+            window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+    }
+
+    // Register proximity sensor only when it can usefully prevent battery drain.
+    private fun syncProximity() {
+        val needed = !isCharging() && !screenAlwaysOn && proxSensor != null
+        if (needed && !proxRegistered) {
+            sm.registerListener(this, proxSensor!!, SensorManager.SENSOR_DELAY_NORMAL)
+            proxRegistered = true
+        } else if (!needed && proxRegistered) {
+            sm.unregisterListener(this, proxSensor)
+            proxRegistered = false
+            pocketHandler.removeCallbacks(sleepRunnable)
+            isNearby = false
+        }
+    }
+
+    private fun isCharging(): Boolean {
+        val intent = registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+        val status = intent?.getIntExtra(BatteryManager.EXTRA_STATUS, -1) ?: -1
+        return status == BatteryManager.BATTERY_STATUS_CHARGING ||
+               status == BatteryManager.BATTERY_STATUS_FULL
+    }
+
+    private fun updateScreenKeepOn() {
+        if (isCharging() || !isNearby || screenAlwaysOn) {
+            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        } else {
+            window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+    }
+
+    // SensorEventListener — TYPE_PROXIMITY only.
+    override fun onSensorChanged(event: SensorEvent) {
+        if (event.sensor.type != Sensor.TYPE_PROXIMITY) return
+        val wasNearby = isNearby
+        isNearby = event.values[0] < event.sensor.maximumRange
+        pocketHandler.removeCallbacks(sleepRunnable)
+        if (isNearby) {
+            // Delay — avoids reacting to brief pocket contact or accidental covers.
+            pocketHandler.postDelayed(sleepRunnable, 5_000L)
+        } else if (wasNearby) {
+            // Phone removed from pocket: restore keep-on immediately.
+            updateScreenKeepOn()
+        }
+    }
+
+    override fun onAccuracyChanged(sensor: Sensor, accuracy: Int) {}
+
+    // ── Charging broadcast ────────────────────────────────────────────────────
+    private val chargingReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            syncProximity()
+            updateScreenKeepOn()
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
+        // Show over the lock screen without PIN / fingerprint.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
             setShowWhenLocked(true)
             setTurnScreenOn(true)
@@ -37,10 +121,38 @@ class MainActivity : FlutterActivity() {
                 WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
             )
         }
+
+        proxSensor = sm.getDefaultSensor(Sensor.TYPE_PROXIMITY)
+
+        val filter = IntentFilter().apply {
+            addAction(Intent.ACTION_POWER_CONNECTED)
+            addAction(Intent.ACTION_POWER_DISCONNECTED)
+        }
+        registerReceiver(chargingReceiver, filter)
+        syncProximity()
+        updateScreenKeepOn()
+    }
+
+    override fun onDestroy() {
+        unregisterReceiver(chargingReceiver)
+        if (proxRegistered) sm.unregisterListener(this, proxSensor)
+        pocketHandler.removeCallbacks(sleepRunnable)
+        super.onDestroy()
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+
+        // ── Screen always-on override ────────────────────────────────────────
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "qth_helper/screen")
+            .setMethodCallHandler { call, result ->
+                if (call.method == "setAlwaysOn") {
+                    screenAlwaysOn = call.argument<Boolean>("value") ?: false
+                    syncProximity()
+                    updateScreenKeepOn()
+                    result.success(null)
+                } else result.notImplemented()
+            }
 
         // ── Magnetic declination ─────────────────────────────────────────────
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "qth_helper/geomagnetic")
