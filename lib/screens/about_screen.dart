@@ -152,6 +152,9 @@ class AboutScreen extends StatelessWidget {
                       secondary: textColor,
                       onSecondary: bg,
                       surfaceTint: Colors.transparent,
+                      // M3 Divider and similar elements use outlineVariant
+                      outline: divColor,
+                      outlineVariant: divColor,
                     ),
                     // LicensePage renders its text via textTheme, not just colorScheme.
                     textTheme: ThemeData.dark().textTheme.apply(
@@ -172,6 +175,11 @@ class AboutScreen extends StatelessWidget {
                       collapsedBackgroundColor: bg,
                     ),
                     dividerColor: divColor,
+                    dividerTheme: DividerThemeData(color: divColor, thickness: 1),
+                    scrollbarTheme: ScrollbarThemeData(
+                      thumbColor: WidgetStateProperty.all(dimColor),
+                      trackColor: WidgetStateProperty.all(divColor),
+                    ),
                     iconTheme: IconThemeData(color: dimColor),
                   ),
                   child: const LicensePage(

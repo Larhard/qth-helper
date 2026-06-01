@@ -13,11 +13,26 @@ and one-handed operation.
 
 ## Features
 
-### Heading
-- Dual rotating arrows: **primary** (full colour) shows the active source, **secondary** (dimmed) shows the other
-- Auto-switches at ≥ 5.4 km/h: **GPS course** (green, true north) when moving, **magnetic compass + WMM declination** (white) when stationary
-- **TRK** — smoothed track bearing from a spatial point buffer; more stable than last-two-point bearing
-- Speed display — long-press to cycle km/h / knots / mph
+### Heading display
+
+Two display modes — long-press the arrow/rose to toggle:
+
+**Arrow mode**
+- **Primary arrow** (full colour) shows the active source
+- **Secondary arrow** (30 % opacity) shows the complementary source
+- Relative dot ring marks bearing to city, active waypoint, and MOB
+
+**Wind-rose mode**
+- Compass ring rotates so your heading is always at 12 o'clock
+- **North marker**: traditional red tick + "N" label — distinct from waypoint dots
+- **Heading cursor**: fixed white triangle at 12 o'clock indicates current travel direction
+- **Secondary bearing** shown as a dash on the ring
+- Bearing dots for city / waypoint / MOB rotate with the rose
+
+**Heading sources** — long-press the degree readout to cycle:
+- **GPS course** (green) — used above 5.4 km/h; true-north corrected
+- **TRK** (yellow-green) — smoothed track bearing from a spatial point buffer; more stable than last-two-point GPS
+- **MAG** (white / dim red) — magnetic compass with WMM declination correction; primary when stationary
 
 ### GPS Coordinates
 - Three formats: **DD° MM.MMM'** (default), **DD.DDDDDD°**, **DD° MM' SS.SS"** — long-press to cycle
@@ -39,26 +54,53 @@ Four precision levels, cycled by tapping the city section:
 
 Modes with no data loaded (setup scripts not yet run) are skipped automatically.
 In **Port mode**, VHF working channel and radio call sign are shown when available; tap VHF to copy.
+Long-press the city name to open a full detail sheet (coordinates, bearing, port facilities, links).
 
-### Waypoints / MOB
-- Tap **MOB** to drop a waypoint at the current position (Man Overboard marker)
-- Active waypoint shows bearing, distance, coordinates (all formats), locator, and elapsed time
-- Open the **Waypoints screen** (pin icon, top-right) to manage saved waypoints; tap `+` to add one by coordinates
-- Tap a waypoint to activate / deactivate as navigation target
-- **Hold the active card for 3 s** to deactivate — progress ring fills the border; release early to cancel
+### Waypoints and MOB
+
+**MOB (Man Overboard / emergency marker)**
+- Tap **MOB** to drop an emergency waypoint at the current position
+- Shows bearing, distance, coordinates (all formats), locator, and timestamp
+- **Hold the MOB card for 3 s** to clear — progress ring fills the border; release early to cancel
+- MOB is always visible at the bottom of the screen (landscape and portrait)
+
+**Navigation waypoints**
+- Open the **Waypoints screen** (pin icon, top-right) to manage saved waypoints
+- Tap a waypoint to activate as navigation target; active waypoint shows bearing and distance
+- Tap `+` to add a waypoint by coordinates
+- **Hold to delete** from the list (prevents accidental removal)
+- **Hold the nav waypoint card for 3 s** to deactivate
+
+Both MOB and navigation waypoints can be active simultaneously.
 
 ### Day / Night mode
-- **Day** — full-contrast palette, readable in direct sunlight
-- **Night** — red-only palette; no greens, blues, or ambers; preserves night vision for marine use
+- **Day** — semantic colour palette: green = GPS, amber = MGRS/time, cyan = ports, orange = nav waypoints, red = emergency
+- **Night** — red-only palette (hue ≈ 0°, varying brightness); no greens, blues, or ambers; preserves rhodopsin for marine and hiking use
 - **Hold the moon / sun icon** to switch — deliberate hold prevents accidental activation
+
+The entire UI uses a unified colour system (`kD*` day constants, `kN*` night constants in `utils/units.dart`). Changing one constant updates every screen.
 
 ### GPS on lock screen
 - GPS pauses when the screen turns off by default (saves battery on long hikes)
-- **Hold the source label** (`GPS @ lock`) for 1.5 s to toggle **ON LOCK** — GPS keeps running via a foreground service
-- ON LOCK requires the *"Allow all the time"* location permission; the system prompts for it on first enable
+- **Long-press** `GPS @ lock` to toggle — GPS keeps running via a foreground service (ON LOCK mode)
+- ON LOCK requires the *"Allow all the time"* location permission; the system prompts on first enable
+
+### Pocket lock
+- **Long-press** `phone @ sensor` to toggle proximity-based screen dimming
+- When enabled and the phone is in a pocket for 5 seconds: screen dims to black, touch is blocked
+- Screen restores immediately when the phone is taken out
+- Only activates when the charger is **not** connected
+- Uses brightness + touch-blocking only — no PIN required, biometric unlock works instantly
 
 ### Debug screen
-Hold the bug icon (top-left). Three tabs: **GPS** (fix quality, satellites), **Heading** (all bearing sources), **Locators** (all coordinate formats, nearest entry per city/port mode).
+Hold the bug icon (top-left). Four tabs:
+
+| Tab | Contents |
+|-----|----------|
+| GPS | Fix quality, satellite count per constellation, stale timer |
+| Heading | All bearing sources (GPS course, TRK, MAG), declination, track buffer canvas |
+| Locators | All coordinate formats, Maidenhead 4/6/8, MGRS, nearest city per mode |
+| Sensors | Proximity, environmental (temp, pressure, light, humidity), gravity, linear acceleration, battery |
 
 ---
 
@@ -72,24 +114,25 @@ qth_helper/
 │   │   ├── city.dart            # City + port data model
 │   │   └── waypoint.dart
 │   ├── screens/
-│   │   ├── home_screen.dart     # Main navigation display
+│   │   ├── home_screen.dart     # Main navigation display (~2 500 lines)
 │   │   ├── waypoints_screen.dart
 │   │   ├── about_screen.dart    # Legal notices and open-source licences
 │   │   └── debug_screen.dart
 │   ├── services/
 │   │   ├── city_service.dart    # Spatial grid lookup (cities and ports)
 │   │   ├── declination_service.dart
+│   │   ├── environment_service.dart  # Sensor stream (proximity, env, motion)
 │   │   └── waypoint_service.dart
 │   ├── utils/
 │   │   ├── coordinate_utils.dart  # DDM / DD / DMS + Maidenhead
 │   │   ├── geo_utils.dart         # Haversine + bearing
 │   │   ├── mgrs_utils.dart
 │   │   ├── track_bearing.dart     # Smoothed track bearing estimator
-│   │   └── units.dart             # Speed / distance / format preferences
+│   │   └── units.dart             # Unified colour palette + speed / distance / format preferences
 │   └── widgets/
 │       └── arrow_widget.dart
 ├── android/app/src/main/
-│   ├── kotlin/…/MainActivity.kt   # Lock-screen flags + GNSS channel
+│   ├── kotlin/…/MainActivity.kt   # Lock-screen flags, pocket lock, GNSS/sensor channels
 │   └── AndroidManifest.xml
 ├── assets/
 │   ├── cities.tsv            # Top-5 000 cities — committed (260 KB, CC BY 4.0)
@@ -306,3 +349,6 @@ Full licence text: [LICENSE](LICENSE) · Third-party notices: [NOTICES](NOTICES)
 - **City and port databases** are static snapshots. Port communication data (VHF channels, phone
   numbers) comes from the NGA WPI; accuracy depends on the publication date.
 - Port VHF data is absent for many small marinas — the WPI focuses on commercial ports.
+- **Pocket lock** uses brightness + touch-blocking, not a device lock. The screen dims to black
+  and touch is disabled, but the keyguard remains in its normal state so biometric unlock works
+  immediately when the phone is taken out of the pocket.
