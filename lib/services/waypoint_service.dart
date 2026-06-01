@@ -1,24 +1,41 @@
 import 'package:get_storage/get_storage.dart';
 import '../models/waypoint.dart';
 
+/// Two independent tracking concepts:
+///
+///  emergency (MOB) — set by the MOB button; used for life-safety tracking.
+///  active (navigation) — set from the Waypoints list; used for route guidance.
+///
+/// Both can be shown simultaneously in the UI.
 class WaypointService {
   WaypointService._();
   static final instance = WaypointService._();
 
   static final _store = GetStorage();
-  static const _listKey = 'waypoints';
+  static const _listKey   = 'waypoints';
   static const _activeKey = 'active_waypoint';
+  static const _emerKey   = 'emergency_waypoint';
 
   final List<Waypoint> _waypoints = [];
-  String? _activeId;
+  String? _activeId;     // navigation waypoint (from list)
+  String? _emergencyId;  // MOB / emergency waypoint
 
   List<Waypoint> get waypoints => List.unmodifiable(_waypoints);
-  String? get activeId => _activeId;
+  String? get activeId     => _activeId;
+  String? get emergencyId  => _emergencyId;
 
   Waypoint? get active {
     if (_activeId == null) return null;
     for (final w in _waypoints) {
       if (w.id == _activeId) return w;
+    }
+    return null;
+  }
+
+  Waypoint? get emergency {
+    if (_emergencyId == null) return null;
+    for (final w in _waypoints) {
+      if (w.id == _emergencyId) return w;
     }
     return null;
   }
@@ -32,29 +49,47 @@ class WaypointService {
       } catch (_) {}
     }
     _activeId = _store.read<String>(_activeKey);
-    // Purge stale active ID
+    _emergencyId = _store.read<String>(_emerKey);
+    // Purge stale IDs
     if (_activeId != null && !_waypoints.any((w) => w.id == _activeId)) {
       _activeId = null;
       _store.remove(_activeKey);
     }
+    if (_emergencyId != null && !_waypoints.any((w) => w.id == _emergencyId)) {
+      _emergencyId = null;
+      _store.remove(_emerKey);
+    }
   }
 
-  Waypoint add(double lat, double lon) {
+  // ── Emergency / MOB ────────────────────────────────────────────────────────
+
+  /// Called by the MOB button — creates an emergency waypoint and sets it as
+  /// the active emergency target.  The waypoint is also added to the list so
+  /// the user can rename / review it later.
+  Waypoint addEmergency(double lat, double lon) {
     final w = Waypoint(
       id: DateTime.now().millisecondsSinceEpoch.toString(),
-      name: 'WPT ${_waypoints.length + 1}',
+      name: 'MOB ${_waypoints.where((w) => w.isEmergency).length + 1}',
       lat: lat,
       lon: lon,
       timestamp: DateTime.now(),
+      isEmergency: true,
     );
     _waypoints.insert(0, w);
-    _activeId = w.id;
+    _emergencyId = w.id;
     _persist();
-    _store.write(_activeKey, _activeId);
+    _store.write(_emerKey, _emergencyId);
     return w;
   }
 
-  // Add manually entered waypoint (from the waypoints screen).
+  void clearEmergency() {
+    _emergencyId = null;
+    _store.remove(_emerKey);
+  }
+
+  // ── Navigation (from list) ─────────────────────────────────────────────────
+
+  /// Add a manually entered waypoint (waypoints screen +).
   Waypoint addManual(String name, double lat, double lon) {
     final w = Waypoint(
       id: DateTime.now().millisecondsSinceEpoch.toString(),
@@ -68,6 +103,8 @@ class WaypointService {
     return w;
   }
 
+  /// Set a navigation target from the waypoints list.
+  /// Does NOT affect the emergency (MOB) tracking.
   void setActive(String id) {
     if (_waypoints.any((w) => w.id == id)) {
       _activeId = id;
@@ -80,11 +117,17 @@ class WaypointService {
     _store.remove(_activeKey);
   }
 
+  // ── Shared ─────────────────────────────────────────────────────────────────
+
   void remove(String id) {
     _waypoints.removeWhere((w) => w.id == id);
     if (_activeId == id) {
       _activeId = null;
       _store.remove(_activeKey);
+    }
+    if (_emergencyId == id) {
+      _emergencyId = null;
+      _store.remove(_emerKey);
     }
     _persist();
   }

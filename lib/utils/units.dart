@@ -111,3 +111,31 @@ LocatorType loadLocatorType() {
   return LocatorType.values[idx.clamp(0, LocatorType.values.length - 1)];
 }
 void saveLocatorType(LocatorType t) => GetStorage().write(_locTypeKey, t.index);
+
+// ── Heading arrow display mode ─────────────────────────────────────────────
+// arrow    = simple rotating arrow + relative dots (mode A)
+// windRose = compass rose rotating around the arrow (mode B)
+
+enum HeadingArrowMode { arrow, windRose }
+
+const _arrowModeKey = 'heading_arrow_mode';
+HeadingArrowMode loadHeadingArrowMode() {
+  final idx = GetStorage().read<int>(_arrowModeKey) ?? 0;
+  return HeadingArrowMode.values[idx.clamp(0, HeadingArrowMode.values.length - 1)];
+}
+void saveHeadingArrowMode(HeadingArrowMode m) =>
+    GetStorage().write(_arrowModeKey, m.index);
+
+// ── Heading source mode ────────────────────────────────────────────────────
+// magOnly = compass always primary  (TRK/GPS secondary)
+// auto    = GPS when fast, TRK when medium speed, MAG when slow (MAG secondary)
+
+enum HeadingSourceMode { magOnly, auto }
+
+const _sourceModeKey = 'heading_source_mode';
+HeadingSourceMode loadHeadingSourceMode() {
+  final idx = GetStorage().read<int>(_sourceModeKey) ?? 0;
+  return HeadingSourceMode.values[idx.clamp(0, HeadingSourceMode.values.length - 1)];
+}
+void saveHeadingSourceMode(HeadingSourceMode m) =>
+    GetStorage().write(_sourceModeKey, m.index);

@@ -39,8 +39,7 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
   Color get _cPrimary  => _day ? Colors.white               : const Color(0xFFCC3333);
   Color get _cSecond   => _day ? const Color(0xFFCCCCCC)    : const Color(0xFF882222);
   Color get _cTertiary => _day ? const Color(0xFF888888)    : const Color(0xFF551111);
-  Color get _cDim      => _day ? const Color(0xFF666666)    : const Color(0xFF441111);
-  Color get _cActive   => _day ? const Color(0xFFFF3333)    : const Color(0xFF882222);
+  Color get _cDim      => _day ? const Color(0xFF666666)    : const Color(0xFF663333);
   Color get _cDistText => _day ? const Color(0xFFAAAAAA)    : const Color(0xFF661111);
   Color _locColor(LocatorType t) => !_day
       ? const Color(0xFF882222)
@@ -109,7 +108,8 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
   }
 
   Widget _tile(Waypoint wp) {
-    final isActive = WaypointService.instance.activeId == wp.id;
+    final isActive    = WaypointService.instance.activeId == wp.id;       // navigation
+    final isEmergency = WaypointService.instance.emergencyId == wp.id;    // MOB
     final pos = widget.currentPosition;
     final dist = pos != null
         ? formatDistanceUnit(
@@ -133,17 +133,25 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
         highlightColor: inkColor,
       ),
       child: ListTile(
-      tileColor: isActive ? const Color(0xFF1A0000) : Colors.transparent,
+      tileColor: isEmergency
+          ? const Color(0xFF1A0000)
+          : isActive ? const Color(0xFF1A0800) : Colors.transparent,
       leading: Icon(
-        isActive ? Icons.navigation : Icons.location_on_outlined,
-        color: isActive ? _cActive : _cDim,
+        isEmergency
+            ? Icons.warning_rounded
+            : isActive ? Icons.navigation : Icons.location_on_outlined,
+        color: isEmergency
+            ? const Color(0xFFFF3333)
+            : isActive ? const Color(0xFFFF6E40) : _cDim,
         size: 22,
       ),
       title: Text(
         wp.name,
         style: TextStyle(
-          color: isActive ? _cActive : _cPrimary,
-          fontWeight: isActive ? FontWeight.w700 : FontWeight.w400,
+          color: isEmergency
+              ? const Color(0xFFFF3333)
+              : isActive ? const Color(0xFFFF6E40) : _cPrimary,
+          fontWeight: (isEmergency || isActive) ? FontWeight.w700 : FontWeight.w400,
           fontSize: 16,
         ),
       ),

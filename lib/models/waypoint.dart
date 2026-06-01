@@ -4,6 +4,7 @@ class Waypoint {
   double lat;
   double lon;
   final DateTime timestamp;
+  final bool isEmergency; // true = MOB emergency; false = navigation waypoint
 
   Waypoint({
     required this.id,
@@ -11,6 +12,7 @@ class Waypoint {
     required this.lat,
     required this.lon,
     required this.timestamp,
+    this.isEmergency = false,
   });
 
   factory Waypoint.fromJson(Map<String, dynamic> j) => Waypoint(
@@ -19,6 +21,7 @@ class Waypoint {
         lat: (j['lat'] as num).toDouble(),
         lon: (j['lon'] as num).toDouble(),
         timestamp: DateTime.fromMillisecondsSinceEpoch(j['ts'] as int),
+        isEmergency: j['emer'] as bool? ?? false,
       );
 
   Map<String, dynamic> toJson() => {
@@ -27,5 +30,6 @@ class Waypoint {
         'lat': lat,
         'lon': lon,
         'ts': timestamp.millisecondsSinceEpoch,
+        if (isEmergency) 'emer': true,
       };
 }

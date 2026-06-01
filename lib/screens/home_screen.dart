@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'package:url_launcher/url_launcher.dart';
 import '../utils/track_bearing.dart';
 import 'package:flutter/material.dart';
@@ -83,6 +84,10 @@ class _HomeScreenState extends State<HomeScreen>
   static const _screenChannel = MethodChannel('qth_helper/screen');
   bool _pocketLockEnabled = GetStorage().read<bool>('pocket_lock') ?? false;
 
+  // ── Heading arrow / source modes ─────────────────────────────────────────
+  HeadingArrowMode  _headingArrowMode  = loadHeadingArrowMode();
+  HeadingSourceMode _headingSourceMode = loadHeadingSourceMode();
+
   // ── Speed unit ────────────────────────────────────────────────────────────
   SpeedUnit _speedUnit = loadSpeedUnit();
 
@@ -153,7 +158,7 @@ class _HomeScreenState extends State<HomeScreen>
   Color get _cSaveLock => _dayMode ? const Color(0xFFFFAB40) : const Color(0xFF661111);
   Color get _cLiveLock => _dayMode ? const Color(0xFF26C6DA) : const Color(0xFF992222);
   // Secondary heading arrow — ghost level in night (no extra Opacity needed)
-  Color get _cSecondaryArrow => _dayMode ? Colors.white : const Color(0xFF441111);
+  // _cSecondaryArrow removed — secondary heading colour now via _secondaryHeadingColor
   // Active waypoint / MOB card
   Color get _cWptName   => _dayMode ? const Color(0xFFFF3333) : const Color(0xFF882222);
   Color get _cWptArrow  => _dayMode ? const Color(0xFFFF3333) : const Color(0xFF882222);
@@ -174,19 +179,67 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   // ── Derived ───────────────────────────────────────────────────────────────
-  bool get _usingGps {
+  // ── Primary heading source ────────────────────────────────────────────────
+  // magOnly mode: compass always primary.
+  // auto mode:    GPS when fast (≥1.5 m/s), TRK when medium (≥0.5 m/s), MAG otherwise.
+  // Secondary is always the complementary source (MAG in auto, TRK/GPS in magOnly).
+
+  bool _gpsSpeedValid() {
     final p = _position;
     return p != null && p.speed >= _gpsThresholdMs && !p.heading.isNaN && p.heading >= 0;
   }
 
-  double get _heading => _usingGps ? _position!.heading : _compassHeading;
+  // Enum shorthand for the three sources.
+  static const int _srcMag = 0, _srcTrk = 1, _srcGps = 2;
 
-  // In night mode both GPS and compass arrows use dim red; no greens or whites.
-  Color get _headingColor => _dayMode
-      ? (_usingGps ? const Color(0xFF55DD55) : Colors.white)
-      : (_usingGps ? const Color(0xFFCC2222) : const Color(0xFF882222));
+  int get _primarySourceId {
+    if (_headingSourceMode == HeadingSourceMode.magOnly) return _srcMag;
+    if (_gpsSpeedValid()) return _srcGps;
+    // In auto mode, once TRK is available it stays primary even when stationary —
+    // the last known travel direction is more useful than a magnetic compass.
+    if (_track.bearing != null) return _srcTrk;
+    return _srcMag; // only when no TRK data at all (app just started)
+  }
 
-  Color get _secondaryHeadingColor => _dayMode ? Colors.white : const Color(0xFF882222);
+  // Keep _usingGps for compass listener logic (compass is NOT primary when GPS/TRK is).
+  bool get _usingGps => _primarySourceId != _srcMag;
+
+  double get _heading => switch (_primarySourceId) {
+    _srcGps => _position?.heading ?? _compassHeading,
+    _srcTrk => _track.bearing ?? _compassHeading,
+    _       => _compassHeading,
+  };
+
+  // GPS=green, TRK=lime-green (slightly different tone), MAG=white
+  // Night: all shift to reds with distinct brightness.
+  Color get _headingColor => switch (_primarySourceId) {
+    _srcGps => _dayMode ? const Color(0xFF55DD55) : const Color(0xFFCC2222),
+    _srcTrk => _dayMode ? const Color(0xFF88CC33) : const Color(0xFF992222),
+    _       => _dayMode ? Colors.white             : const Color(0xFF882222),
+  };
+
+  String get _sourceLabel => switch (_primarySourceId) {
+    _srcGps => 'GPS',
+    _srcTrk => 'TRK',
+    _       => 'MAG',
+  };
+
+  // Secondary bearing (the other source, shown as a dimmed indicator).
+  double? get _secondaryBearing => switch (_headingSourceMode) {
+    HeadingSourceMode.auto    => _compassHeading,                           // MAG always secondary in auto
+    HeadingSourceMode.magOnly => _track.bearing ?? _lastValidGpsHeading,    // TRK/GPS secondary in magOnly
+  };
+
+  Color get _secondaryHeadingColor {
+    if (_headingSourceMode == HeadingSourceMode.auto) {
+      return _dayMode ? Colors.white : const Color(0xFF882222); // MAG = white/dim-red
+    }
+    // magOnly: secondary is TRK or GPS
+    if (_track.bearing != null) {
+      return _dayMode ? const Color(0xFF88CC33) : const Color(0xFF992222); // TRK
+    }
+    return _dayMode ? const Color(0xFF55DD55) : const Color(0xFFCC2222);   // GPS
+  }
 
   // City accent colours collapse to dim red in night mode.
   Color get _cityColor => !_dayMode ? const Color(0xFF882222) : switch (CityService.instance.mode) {
@@ -426,17 +479,38 @@ class _HomeScreenState extends State<HomeScreen>
     final pos = _position;
     if (pos == null) return;
     HapticFeedback.heavyImpact();
-    WaypointService.instance.add(pos.latitude, pos.longitude);
+    WaypointService.instance.addEmergency(pos.latitude, pos.longitude);
     setState(() {});
   }
 
-  void _deactivateWaypoint() {
-    WaypointService.instance.deactivate();
+  void _clearEmergency() {
+    WaypointService.instance.clearEmergency();
     if (mounted) setState(() {});
   }
 
+  void _toggleHeadingArrowMode() {
+    final next = _headingArrowMode == HeadingArrowMode.arrow
+        ? HeadingArrowMode.windRose
+        : HeadingArrowMode.arrow;
+    setState(() => _headingArrowMode = next);
+    saveHeadingArrowMode(next);
+    HapticFeedback.lightImpact();
+  }
+
+  void _toggleHeadingSourceMode() {
+    final next = _headingSourceMode == HeadingSourceMode.magOnly
+        ? HeadingSourceMode.auto
+        : HeadingSourceMode.magOnly;
+    setState(() => _headingSourceMode = next);
+    saveHeadingSourceMode(next);
+    HapticFeedback.lightImpact();
+    _showSnack(next == HeadingSourceMode.auto
+        ? 'Heading: AUTO (GPS → TRK → MAG by speed)'
+        : 'Heading: MAG primary (TRK / GPS secondary)');
+  }
+
   void _startClear() {
-    if (WaypointService.instance.active == null) return;
+    if (WaypointService.instance.emergency == null) return;
     _holding = true;
     _holdWatch..reset()..start();
     if (!_holdTicker.isActive) _holdTicker.start();
@@ -467,7 +541,7 @@ class _HomeScreenState extends State<HomeScreen>
     _holdTicker.stop();
     setState(() => _clearProgress = 0.0);
     HapticFeedback.heavyImpact();
-    _deactivateWaypoint();
+    _clearEmergency();
   }
 
   // ── GPS-on-lock toggle ────────────────────────────────────────────────────
@@ -769,19 +843,21 @@ class _HomeScreenState extends State<HomeScreen>
                 width: 80,
                 height: 80,
                 child: Stack(alignment: Alignment.center, children: [
-                  ArrowWidget(bearingDeg: _compassHeading, color: Colors.white, size: 80),
+                  ArrowWidget(bearingDeg: _compassHeading,
+                      color: _dayMode ? Colors.white : const Color(0xFF882222), size: 80),
                 ]),
               ),
               const SizedBox(height: 6),
               Text('${_compassHeading.round()}°',
-                  style: const TextStyle(
+                  style: TextStyle(
                       fontSize: 52,
                       fontWeight: FontWeight.w900,
-                      color: Colors.white,
+                      color: _dayMode ? Colors.white : const Color(0xFF882222),
                       height: 1.0)),
-              const Text('MAG',
+              Text('MAG',
                   style: TextStyle(
-                      color: Colors.white38, fontSize: 12, letterSpacing: 2.5)),
+                      color: _dayMode ? Colors.white38 : const Color(0xFF551111),
+                      fontSize: 12, letterSpacing: 2.5)),
               const SizedBox(height: 32),
             ],
             const CircularProgressIndicator(color: Colors.white24),
@@ -913,9 +989,25 @@ class _HomeScreenState extends State<HomeScreen>
           _coordsSection(),
           _divider(),
           if (_nearestCity != null) _citySection(_nearestCity!),
-          const Spacer(),
-          _wptSection(pos),
-          const SizedBox(height: 4),
+          // Expanded + constrained scroll: the tracking section stays at the bottom
+          // but can scroll when both nav-waypoint and MOB emergency are active.
+          Expanded(
+            child: Align(
+              alignment: Alignment.bottomLeft,
+              child: Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxHeight: MediaQuery.of(context).size.height * 0.52,
+                  ),
+                  child: SingleChildScrollView(
+                    reverse: true,
+                    child: _wptSection(pos),
+                  ),
+                ),
+              ),
+            ),
+          ),
         ],
       ),
     );
@@ -1002,41 +1094,121 @@ class _HomeScreenState extends State<HomeScreen>
         child: Divider(color: _cDivider, height: 1),
       );
 
+  // ── Bearing-ring markers ──────────────────────────────────────────────────
+  // Returns the city and/or active-waypoint bearing as coloured dots that will
+  // be drawn on the ring around the heading arrow, showing relative direction
+  // ("is the POI ahead? to my right? behind me?") at a glance while driving.
+  // City dot, navigation waypoint dot (amber, medium), MOB dot (red, largest).
+  // sizeScale multiplies the base dot radius so urgency is also expressed by size.
+  List<({double bearingDeg, Color color, double sizeScale})> _bearingMarkers(Position pos) {
+    final result = <({double bearingDeg, Color color, double sizeScale})>[];
+
+    // City
+    if (_nearestCity != null) {
+      result.add((bearingDeg: _nearestCity!.bearingDeg, color: _cityColor, sizeScale: 1.0));
+    }
+
+    // Navigation waypoint (non-emergency, selected from list)
+    final navWp = WaypointService.instance.active;
+    if (navWp != null) {
+      // Day: deep orange-red — clearly distinct from city oranges/amber/lime.
+    // Night: medium red (consistent with palette).
+    final navColor = _dayMode ? const Color(0xFFFF6E40) : const Color(0xFF992222);
+      result.add((
+        bearingDeg: bearing(pos.latitude, pos.longitude, navWp.lat, navWp.lon),
+        color: navColor,
+        sizeScale: 1.2,
+      ));
+    }
+
+    // Emergency MOB
+    final mob = WaypointService.instance.emergency;
+    if (mob != null) {
+      result.add((
+        bearingDeg: bearing(pos.latitude, pos.longitude, mob.lat, mob.lon),
+        color: const Color(0xFFFF3333),
+        sizeScale: 1.45,
+      ));
+    }
+
+    return result;
+  }
+
   // ── Heading ───────────────────────────────────────────────────────────────
   Widget _headingSection(Position pos) {
     final color = _headingColor;
     final primary = _heading;
+    final markers = _bearingMarkers(pos);
+    final secBearing = _secondaryBearing;
+    final windRose = _headingArrowMode == HeadingArrowMode.windRose;
     return Row(children: [
-      SizedBox(
-        width: 80,
-        height: 80,
-        child: Stack(alignment: Alignment.center, children: [
-          ValueListenableBuilder<double>(
-            valueListenable: _compassNotifier,
-            builder: (_, compassBearing, __) {
-              final secondaryBearing =
-                  _usingGps ? compassBearing : (_track.bearing ?? _lastValidGpsHeading);
-              if (secondaryBearing == null) return const SizedBox.shrink();
-              return Opacity(
-                opacity: 0.38,
-                child: ArrowWidget(
-                    bearingDeg: secondaryBearing,
-                    color: _secondaryHeadingColor,
-                    size: 80),
-              );
-            },
-          ),
-          ArrowWidget(bearingDeg: primary, color: color, size: 80),
-        ]),
+      GestureDetector(
+        onLongPress: _toggleHeadingArrowMode,
+        behavior: HitTestBehavior.opaque,
+        child: SizedBox(
+          width: 80,
+          height: 80,
+          child: Stack(alignment: Alignment.center, children: [
+            // Relative-bearing ring — drawn behind everything.
+            Positioned.fill(child: CustomPaint(
+              painter: _BearingRingPainter(
+                primaryHeading: primary,
+                markers: markers,
+                dayMode: _dayMode,
+                windRoseMode: windRose,
+                secondaryBearing: windRose ? secBearing : null,
+                secondaryColor: _secondaryHeadingColor,
+              ),
+            )),
+            // Secondary arrow — only in arrow mode; in wind-rose mode it is
+            // shown as a dash on the ring inside _BearingRingPainter.
+            // Secondary arrow (only in arrow mode; wind-rose shows it separately)
+            if (!windRose)
+              ValueListenableBuilder<double>(
+                valueListenable: _compassNotifier,
+                builder: (_, compassBearing, __) {
+                  final sb = _headingSourceMode == HeadingSourceMode.auto
+                      ? compassBearing
+                      : (_track.bearing ?? _lastValidGpsHeading);
+                  if (sb == null) return const SizedBox.shrink();
+                  // Day: dim via Opacity; Night: already dim red, no extra Opacity needed.
+                  return _dayMode
+                      ? Opacity(opacity: 0.38,
+                          child: ArrowWidget(bearingDeg: sb, color: _secondaryHeadingColor, size: 80))
+                      : ArrowWidget(bearingDeg: sb, color: _secondaryHeadingColor, size: 80);
+                },
+              ),
+            // Wind-rose: show secondary as full arrow, primary omitted (the rose IS the reference).
+            if (windRose && secBearing != null)
+              ValueListenableBuilder<double>(
+                valueListenable: _compassNotifier,
+                builder: (_, compassBearing, __) {
+                  final sb = _headingSourceMode == HeadingSourceMode.auto
+                      ? compassBearing
+                      : (_track.bearing ?? _lastValidGpsHeading);
+                  if (sb == null) return const SizedBox.shrink();
+                  return _dayMode
+                      ? Opacity(opacity: 0.5,
+                          child: ArrowWidget(bearingDeg: sb, color: _secondaryHeadingColor, size: 80))
+                      : ArrowWidget(bearingDeg: sb, color: _secondaryHeadingColor, size: 80);
+                },
+              ),
+            if (!windRose) ArrowWidget(bearingDeg: primary, color: color, size: 80),
+          ]),
+        ),
       ),
       const SizedBox(width: 20),
       Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text('${primary.round()}°',
-            style: TextStyle(
-                fontSize: 64,
-                fontWeight: FontWeight.w900,
-                color: color,
-                height: 1.0)),
+        GestureDetector(
+          onLongPress: _toggleHeadingSourceMode,
+          behavior: HitTestBehavior.opaque,
+          child: Text('${primary.round()}°',
+              style: TextStyle(
+                  fontSize: 64,
+                  fontWeight: FontWeight.w900,
+                  color: color,
+                  height: 1.0)),
+        ),
         GestureDetector(
           onLongPress: _cycleSpeedUnit,
           child: Text(
@@ -1061,54 +1233,79 @@ class _HomeScreenState extends State<HomeScreen>
   Widget _headingSectionLandscape(Position pos) {
     final color = _headingColor;
     final primary = _heading;
+    final markers = _bearingMarkers(pos);
+    final secBearing = _secondaryBearing;
+    final windRose = _headingArrowMode == HeadingArrowMode.windRose;
     return Row(
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
-        SizedBox(
-          width: 80,
-          height: 80,
-          child: Stack(alignment: Alignment.center, children: [
-            ValueListenableBuilder<double>(
-              valueListenable: _compassNotifier,
-              builder: (_, compassBearing, __) {
-                final secondaryBearing =
-                    _usingGps ? compassBearing : (_track.bearing ?? _lastValidGpsHeading);
-                if (secondaryBearing == null) return const SizedBox.shrink();
-                // Day: ghost white at 38% opacity.
-                // Night: ghost red rendered directly — no extra Opacity
-                //        so the dim red isn't darkened further to near-black.
-                return _dayMode
-                    ? Opacity(
-                        opacity: 0.38,
-                        child: ArrowWidget(
-                            bearingDeg: secondaryBearing,
-                            color: _cSecondaryArrow,
-                            size: 80),
-                      )
-                    : ArrowWidget(
-                        bearingDeg: secondaryBearing,
-                        color: _cSecondaryArrow,
-                        size: 80);
-              },
-            ),
-            ArrowWidget(bearingDeg: primary, color: color, size: 80),
-          ]),
+        GestureDetector(
+          onLongPress: _toggleHeadingArrowMode,
+          behavior: HitTestBehavior.opaque,
+          child: SizedBox(
+            width: 80,
+            height: 80,
+            child: Stack(alignment: Alignment.center, children: [
+              Positioned.fill(child: CustomPaint(
+                painter: _BearingRingPainter(
+                  primaryHeading: primary,
+                  markers: markers,
+                  dayMode: _dayMode,
+                  windRoseMode: windRose,
+                  secondaryBearing: windRose ? secBearing : null,
+                  secondaryColor: _secondaryHeadingColor,
+                ),
+              )),
+              if (!windRose)
+                ValueListenableBuilder<double>(
+                  valueListenable: _compassNotifier,
+                  builder: (_, compassBearing, __) {
+                    final sb = _headingSourceMode == HeadingSourceMode.auto
+                        ? compassBearing
+                        : (_track.bearing ?? _lastValidGpsHeading);
+                    if (sb == null) return const SizedBox.shrink();
+                    return _dayMode
+                        ? Opacity(opacity: 0.38,
+                            child: ArrowWidget(bearingDeg: sb, color: _secondaryHeadingColor, size: 80))
+                        : ArrowWidget(bearingDeg: sb, color: _secondaryHeadingColor, size: 80);
+                  },
+                ),
+              if (windRose && secBearing != null)
+                ValueListenableBuilder<double>(
+                  valueListenable: _compassNotifier,
+                  builder: (_, compassBearing, __) {
+                    final sb = _headingSourceMode == HeadingSourceMode.auto
+                        ? compassBearing
+                        : (_track.bearing ?? _lastValidGpsHeading);
+                    if (sb == null) return const SizedBox.shrink();
+                    return _dayMode
+                        ? Opacity(opacity: 0.5,
+                            child: ArrowWidget(bearingDeg: sb, color: _secondaryHeadingColor, size: 80))
+                        : ArrowWidget(bearingDeg: sb, color: _secondaryHeadingColor, size: 80);
+                  },
+                ),
+              if (!windRose) ArrowWidget(bearingDeg: primary, color: color, size: 80),
+            ]),
+          ),
         ),
         const SizedBox(width: 14),
         Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
-            // Fixed width prevents layout shift when "9°" grows to "359°".
-            SizedBox(
-              width: 120,
-              child: Text('${primary.round()}°',
-                  textAlign: TextAlign.start,
-                  style: TextStyle(
-                      fontSize: 52,
-                      fontWeight: FontWeight.w900,
-                      color: color,
-                      height: 1.0)),
+            GestureDetector(
+              onLongPress: _toggleHeadingSourceMode,
+              behavior: HitTestBehavior.opaque,
+              child: SizedBox(
+                width: 120,
+                child: Text('${primary.round()}°',
+                    textAlign: TextAlign.start,
+                    style: TextStyle(
+                        fontSize: 52,
+                        fontWeight: FontWeight.w900,
+                        color: color,
+                        height: 1.0)),
+              ),
             ),
             GestureDetector(
               onLongPress: _cycleSpeedUnit,
@@ -1174,7 +1371,7 @@ class _HomeScreenState extends State<HomeScreen>
                 onPointerUp: (_) => _cancelToggle(),
                 onPointerCancel: (_) => _cancelToggle(),
                 child: Row(mainAxisSize: MainAxisSize.min, children: [
-                  Text(_usingGps ? 'GPS' : 'MAG',
+                  Text(_sourceLabel,
                       style: TextStyle(
                           fontSize: sourceFontSize,
                           color: _cText2,
@@ -1198,12 +1395,9 @@ class _HomeScreenState extends State<HomeScreen>
                 onLongPress: _togglePocketLock,
                 behavior: HitTestBehavior.opaque,
                 child: Row(mainAxisSize: MainAxisSize.min, children: [
-                  Text('SCR',
-                      style: TextStyle(
-                          fontSize: sourceFontSize,
-                          color: _pocketLockEnabled ? _cLiveLock : _cText3,
-                          letterSpacing: 2.0)),
-                  const SizedBox(width: 4),
+                  Icon(Icons.smartphone,
+                      size: sourceFontSize,
+                      color: _pocketLockEnabled ? _cLiveLock : _cText3),
                   Icon(
                     _pocketLockEnabled ? Icons.lock : Icons.lock_open,
                     size: sourceFontSize - 1,
@@ -1539,52 +1733,114 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   // ── Active waypoint (MOB) ─────────────────────────────────────────────────
-  Widget _wptSection(Position pos) {
-    final wp = WaypointService.instance.active;
-    if (wp == null) {
-      return SizedBox(
-        width: double.infinity,
-        height: 80,
-        child: ElevatedButton(
-          onPressed: _addWaypoint,
-          style: ElevatedButton.styleFrom(
-            backgroundColor: _cMobBg,
-            foregroundColor: _cMobText,
-            shape:
-                RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
-            elevation: 0,
-          ),
-          child: const Text('MOB',
-              style: TextStyle(
-                  fontSize: 38, fontWeight: FontWeight.w900, letterSpacing: 5)),
+  // ── Navigation waypoint (selected from list, amber) ──────────────────────
+  Widget _navWptCard(Position pos, Waypoint wp, {required bool portrait}) {
+    final b = bearing(pos.latitude, pos.longitude, wp.lat, wp.lon);
+    final d = haversineKm(pos.latitude, pos.longitude, wp.lat, wp.lon);
+    // Day: deep orange-red — clearly distinct from city oranges/amber/lime.
+    // Night: medium red (consistent with palette).
+    final navColor = _dayMode ? const Color(0xFFFF6E40) : const Color(0xFF992222);
+    final navSub   = _dayMode ? const Color(0xFFFF8F00) : const Color(0xFF661111);
+    final arrowSz  = portrait ? 50.0 : 44.0;
+    final dataFz   = portrait ? 22.0 : 20.0;
+    return Padding(
+      padding: const EdgeInsets.all(3),
+      child: Container(
+        decoration: BoxDecoration(
+          border: Border.all(
+            color: navColor.withValues(alpha: 0.25), width: 1),
+          borderRadius: BorderRadius.circular(6),
         ),
-      );
-    }
-    return _wptCard(pos, wp, portrait: true);
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+          child: Row(children: [
+            ArrowWidget(bearingDeg: b, color: navColor, size: arrowSz),
+            const SizedBox(width: 12),
+            Expanded(child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(wp.name,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 14, color: navSub, letterSpacing: 1.2)),
+                Row(children: [
+                  Text('${b.round()}°',
+                      style: TextStyle(fontSize: dataFz, color: navSub,
+                          fontFeatures: const [FontFeature.tabularFigures()])),
+                  const SizedBox(width: 12),
+                  Text(formatDistanceUnit(d, _speedUnit),
+                      style: TextStyle(fontSize: dataFz, color: navColor,
+                          fontWeight: FontWeight.w600,
+                          fontFeatures: const [FontFeature.tabularFigures()])),
+                ]),
+              ],
+            )),
+            GestureDetector(
+              onLongPress: () { WaypointService.instance.deactivate(); setState(() {}); },
+              child: Padding(
+                padding: const EdgeInsets.all(6),
+                child: Icon(Icons.close, size: 18, color: navSub),
+              ),
+            ),
+          ]),
+        ),
+      ),
+    );
+  }
+
+  Widget _wptSection(Position pos) {
+    final nav = WaypointService.instance.active;
+    final mob = WaypointService.instance.emergency;
+    return Column(mainAxisSize: MainAxisSize.min, children: [
+      if (nav != null) ...[
+        _navWptCard(pos, nav, portrait: true),
+        const SizedBox(height: 6),
+      ],
+      if (mob != null)
+        _wptCard(pos, mob, portrait: true)
+      else
+        SizedBox(
+          width: double.infinity,
+          height: 80,
+          child: ElevatedButton(
+            onPressed: _addWaypoint,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: _cMobBg, foregroundColor: _cMobText,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+              elevation: 0,
+            ),
+            child: const Text('MOB',
+                style: TextStyle(fontSize: 38, fontWeight: FontWeight.w900, letterSpacing: 5)),
+          ),
+        ),
+    ]);
   }
 
   Widget _wptSectionLandscape(Position pos) {
-    final wp = WaypointService.instance.active;
-    if (wp == null) {
-      return SizedBox(
-        width: double.infinity,
-        height: 70,
-        child: ElevatedButton(
-          onPressed: _addWaypoint,
-          style: ElevatedButton.styleFrom(
-            backgroundColor: _cMobBg,
-            foregroundColor: _cMobText,
-            shape:
-                RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
-            elevation: 0,
+    final nav = WaypointService.instance.active;
+    final mob = WaypointService.instance.emergency;
+    return Column(mainAxisSize: MainAxisSize.min, children: [
+      if (nav != null) ...[
+        _navWptCard(pos, nav, portrait: false),
+        const SizedBox(height: 6),
+      ],
+      if (mob != null)
+        _wptCard(pos, mob, portrait: false)
+      else
+        SizedBox(
+          width: double.infinity,
+          height: 70,
+          child: ElevatedButton(
+            onPressed: _addWaypoint,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: _cMobBg, foregroundColor: _cMobText,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+              elevation: 0,
+            ),
+            child: const Text('MOB',
+                style: TextStyle(fontSize: 36, fontWeight: FontWeight.w900, letterSpacing: 4)),
           ),
-          child: const Text('MOB',
-              style: TextStyle(
-                  fontSize: 36, fontWeight: FontWeight.w900, letterSpacing: 4)),
         ),
-      );
-    }
-    return _wptCard(pos, wp, portrait: false);
+    ]);
   }
 
   Widget _wptCard(Position pos, Waypoint wp, {required bool portrait}) {
@@ -2254,4 +2510,140 @@ class _WptBorderPainter extends CustomPainter {
   @override
   bool shouldRepaint(_WptBorderPainter old) =>
       old.progress != progress || old.dayMode != dayMode;
+}
+
+// ── Bearing ring ──────────────────────────────────────────────────────────────
+//
+// Drawn behind the heading arrows. Shows coloured dots at the relative bearing
+// of each POI so the user can immediately tell "is the city ahead? left? right?"
+// without reading the absolute bearing number.
+//
+//   dot at 12 o'clock → POI is directly ahead
+//   dot at 3 o'clock  → POI is 90° to the right
+//   dot at 6 o'clock  → POI is directly behind
+//
+// A small tick at the top marks "ahead" as the reference.
+// The ring itself is very dim — it provides context without cluttering the display.
+
+class _BearingRingPainter extends CustomPainter {
+  final double primaryHeading;
+  final List<({double bearingDeg, Color color, double sizeScale})> markers;
+  final bool dayMode;
+  final bool windRoseMode;
+  final double? secondaryBearing; // shown as a dash in wind-rose mode
+  final Color secondaryColor;
+
+  _BearingRingPainter({
+    required this.primaryHeading,
+    required this.markers,
+    required this.dayMode,
+    this.windRoseMode = false,
+    this.secondaryBearing,
+    this.secondaryColor = Colors.white,
+  });
+
+  static const _ringR   = 37.5;
+  static const _dotR    = 3.5;
+  static const _glowR   = 6.0;
+  static const _tickLen = 5.0;
+
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (markers.isEmpty && !windRoseMode) return;
+
+    final cx = size.width  / 2;
+    final cy = size.height / 2;
+
+    final ringBase = dayMode ? Colors.white : const Color(0xFF882222);
+    final ringColor = ringBase.withValues(alpha: dayMode ? 0.12 : 0.18);
+    final tickColor = ringBase.withValues(alpha: dayMode ? 0.30 : 0.40);
+
+    // ── Ring ─────────────────────────────────────────────────────────────
+    canvas.drawCircle(Offset(cx, cy), _ringR,
+        Paint()..color = ringColor..style = PaintingStyle.stroke..strokeWidth = 1.0);
+
+    // ── Wind-rose mode: rotating cardinal/intercardinal tick marks ────────
+    if (windRoseMode) {
+      for (int i = 0; i < 8; i++) {
+        final cardBearing = i * 45.0;
+        final rel   = (cardBearing - primaryHeading + 360) % 360;
+        final angle = rel * _piOver180 - _halfPi;
+        final isCardinal = i % 2 == 0;
+        final tLen  = isCardinal ? 7.0 : 4.0;
+        final tW    = isCardinal ? 1.8 : 1.0;
+        final alpha = isCardinal ? (dayMode ? 0.45 : 0.55) : (dayMode ? 0.22 : 0.28);
+        canvas.drawLine(
+          Offset(cx + _ringR * _cos(angle), cy + _ringR * _sin(angle)),
+          Offset(cx + (_ringR - tLen) * _cos(angle), cy + (_ringR - tLen) * _sin(angle)),
+          Paint()..color = ringBase.withValues(alpha: alpha)..strokeWidth = tW..strokeCap = StrokeCap.round,
+        );
+        // "N" label only (anchor for orientation)
+        if (i == 0) {
+          final lx = cx + (_ringR - 14) * _cos(angle);
+          final ly = cy + (_ringR - 14) * _sin(angle);
+          final nPainter = TextPainter(
+            text: TextSpan(
+              text: 'N',
+              style: TextStyle(
+                fontSize: 8,
+                fontWeight: FontWeight.w700,
+                color: ringBase.withValues(alpha: dayMode ? 0.55 : 0.65),
+              ),
+            ),
+            textDirection: TextDirection.ltr,
+          )..layout();
+          nPainter.paint(canvas,
+              Offset(lx - nPainter.width / 2, ly - nPainter.height / 2));
+        }
+      }
+
+      // Secondary bearing: short inward dash (clearly distinct from arrows and dots)
+      if (secondaryBearing != null) {
+        final rel   = (secondaryBearing! - primaryHeading + 360) % 360;
+        final angle = rel * _piOver180 - _halfPi;
+        canvas.drawLine(
+          Offset(cx + _ringR * _cos(angle), cy + _ringR * _sin(angle)),
+          Offset(cx + (_ringR - 9) * _cos(angle), cy + (_ringR - 9) * _sin(angle)),
+          Paint()
+            ..color = secondaryColor.withValues(alpha: 0.55)
+            ..strokeWidth = 2.5
+            ..strokeCap = StrokeCap.round,
+        );
+      }
+    } else {
+      // Arrow mode: single "ahead" tick at 12 o'clock
+      const aheadAngle = -_halfPi;
+      canvas.drawLine(
+        Offset(cx + _ringR * _cos(aheadAngle), cy + _ringR * _sin(aheadAngle)),
+        Offset(cx + (_ringR - _tickLen) * _cos(aheadAngle), cy + (_ringR - _tickLen) * _sin(aheadAngle)),
+        Paint()..color = tickColor..strokeWidth = 1.5..strokeCap = StrokeCap.round,
+      );
+    }
+
+    // ── POI dots (same in both modes) ─────────────────────────────────────
+    for (final m in markers) {
+      final rel   = (m.bearingDeg - primaryHeading + 360) % 360;
+      final angle = rel * _piOver180 - _halfPi;
+      final dx    = cx + _ringR * _cos(angle);
+      final dy    = cy + _ringR * _sin(angle);
+      canvas.drawCircle(Offset(dx, dy), _glowR * m.sizeScale,
+          Paint()..color = m.color.withValues(alpha: 0.28)..style = PaintingStyle.fill);
+      canvas.drawCircle(Offset(dx, dy), _dotR * m.sizeScale,
+          Paint()..color = m.color..style = PaintingStyle.fill);
+    }
+  }
+
+  static const _halfPi    = 1.5707963267948966;
+  static const _piOver180 = 0.017453292519943295;
+  static double _cos(double a) => math.cos(a);
+  static double _sin(double a) => math.sin(a);
+
+  @override
+  bool shouldRepaint(_BearingRingPainter old) =>
+      old.primaryHeading != primaryHeading ||
+      old.dayMode != dayMode ||
+      old.windRoseMode != windRoseMode ||
+      old.markers.length != markers.length ||
+      old.secondaryBearing != secondaryBearing;
 }
