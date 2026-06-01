@@ -56,11 +56,15 @@ class MainActivity : FlutterActivity(), SensorEventListener {
     private val sleepRunnable = Runnable {
         if (!isNearby || !pocketLockEnabled || isCharging()) return@Runnable
         if (isAdminActive()) {
-            dpm.lockNow()   // true screen lock — requires Device Admin
+            dpm.lockNow()   // true screen lock — keyguard blocks all touch input
         } else {
-            // Fallback when admin was revoked after feature was enabled:
-            // black out the window immediately; backlight powers off after system timeout.
+            // Fallback: black out the window visually.
+            // FLAG_NOT_TOUCHABLE disables the digitizer for this window so pocket
+            // fabric cannot trigger any buttons behind the black screen.
+            // The flag is cleared in updateScreenKeepOn() when the phone is removed
+            // from the pocket.
             window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            window.addFlags(WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE)
             setScreenBrightness(0.0f)
         }
     }
@@ -95,9 +99,11 @@ class MainActivity : FlutterActivity(), SensorEventListener {
         val keepOn = !pocketLockEnabled || !isNearby || isCharging()
         if (keepOn) {
             window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            window.clearFlags(WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE)
             setScreenBrightness(WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE)
         }
-        // clearFlags is handled exclusively by sleepRunnable after the 5-second delay.
+        // clearFlags / addFlags for sleep are handled exclusively by sleepRunnable
+        // after the 5-second delay to avoid abrupt mid-interaction changes.
     }
 
     private fun setScreenBrightness(value: Float) {
