@@ -213,6 +213,18 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
     );   // WillPopScope
   }
 
+  // ── Import badge ─────────────────────────────────────────────────────────
+  Widget _importBadge(String label, Color color) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+    decoration: BoxDecoration(
+      border: Border.all(color: color, width: 1),
+      borderRadius: BorderRadius.circular(3),
+    ),
+    child: Text(label,
+        style: TextStyle(
+            color: color, fontSize: 9, fontWeight: FontWeight.w700, letterSpacing: 0.5)),
+  );
+
   // ── AppBar variants ───────────────────────────────────────────────────────
   AppBar _normalAppBar() => AppBar(
     backgroundColor: Colors.black,
@@ -305,9 +317,9 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
     final locLabel = widget.locatorType == LocatorType.maidenhead ? 'IARU' : 'MGRS';
     final locColor = _locColor(widget.locatorType);
 
-    final isSelected   = _selected.contains(wp.id);
-    final isHighlighted = WaypointService.instance.highlightedImportIds.contains(wp.id);
-    final highlightColor = _day ? kDGps : kN0;
+    final isSelected  = _selected.contains(wp.id);
+    final isNew       = WaypointService.instance.newlyAddedIds.contains(wp.id);
+    final isDupFound  = WaypointService.instance.dupFoundIds.contains(wp.id);
     final inkColor = (_day ? kDFg0 : kN2).withValues(alpha: 0.12);
     return DecoratedBox(
       key: key,
@@ -315,10 +327,9 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
         color: isSelected ? (_day ? kDFg3.withValues(alpha: 0.12) : kN3.withValues(alpha: 0.18)) : null,
         border: Border(
           bottom: BorderSide(color: _day ? kDDiv : kNDiv, width: 1),
-          // Green (day) / bright-red (night) left stripe for freshly imported points.
-          left: isHighlighted
-              ? BorderSide(color: highlightColor, width: 3)
-              : BorderSide.none,
+          left: isNew      ? BorderSide(color: _day ? kDGps  : kN0, width: 3)
+               : isDupFound ? BorderSide(color: _day ? kDAmb  : kN2, width: 3)
+               : BorderSide.none,
         ),
       ),
       child: Theme(
@@ -347,18 +358,22 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
                   : isActive ? (_day ? kDNav : kN0) : _cDim,
               size: 22,
             ),
-      title: Text(
-        wp.name,
-        style: TextStyle(
-          color: isEmergency
-              ? kDEmg
-              : isActive
-                  ? (_day ? kDNav : kN0)
-                  : _cPrimary,
-          fontWeight: (isEmergency || isActive) ? FontWeight.w700 : FontWeight.w400,
-          fontSize: 16,
-        ),
-      ),
+      title: Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
+        Flexible(child: Text(
+          wp.name,
+          style: TextStyle(
+            color: isEmergency
+                ? kDEmg
+                : isActive
+                    ? (_day ? kDNav : kN0)
+                    : _cPrimary,
+            fontWeight: (isEmergency || isActive) ? FontWeight.w700 : FontWeight.w400,
+            fontSize: 16,
+          ),
+        )),
+        if (isNew)      ...[const SizedBox(width: 6), _importBadge('NEW',  _day ? kDGps : kN0)],
+        if (isDupFound) ...[const SizedBox(width: 6), _importBadge('DUPE', _day ? kDAmb : kN2)],
+      ]),
       subtitle: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [

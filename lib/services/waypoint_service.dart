@@ -142,25 +142,29 @@ class WaypointService {
   }
 
   // ── Import highlighting & undo ────────────────────────────────────────────
-  // IDs of the most recently imported batch — available for undo and highlight.
-  final List<String> _lastImportIds    = [];
-  final Set<String>  _highlightedIds   = {};
+  final List<String> _lastImportIds = [];
+  // Newly added points (green NEW badge).
+  final Set<String>  _newlyAddedIds = {};
+  // Existing points where the import found a match and skipped (amber DUPE badge).
+  final Set<String>  _dupFoundIds   = {};
 
-  Set<String> get highlightedImportIds => Set.unmodifiable(_highlightedIds);
-  bool        get canUndoImport        => _lastImportIds.isNotEmpty;
+  Set<String> get newlyAddedIds => Set.unmodifiable(_newlyAddedIds);
+  Set<String> get dupFoundIds   => Set.unmodifiable(_dupFoundIds);
+  bool        get canUndoImport => _lastImportIds.isNotEmpty;
 
   void clearImportHighlights() {
-    _highlightedIds.clear();
+    _newlyAddedIds.clear();
+    _dupFoundIds.clear();
     _lastImportIds.clear();
   }
 
-  /// Remove every waypoint that was added in the last import batch.
   void undoLastImport() {
     for (final id in List.of(_lastImportIds)) {
       remove(id);
     }
     _lastImportIds.clear();
-    _highlightedIds.clear();
+    _newlyAddedIds.clear();
+    _dupFoundIds.clear();
   }
 
   // ── Shared ─────────────────────────────────────────────────────────────────
@@ -175,8 +179,9 @@ class WaypointService {
       _emergencyId = null;
       _store.remove(_emerKey);
     }
+    _newlyAddedIds.remove(id);
+    _dupFoundIds.remove(id);
     _lastImportIds.remove(id);
-    _highlightedIds.remove(id);
     _persist();
   }
 
@@ -187,54 +192,62 @@ class WaypointService {
     _persist();
   }
 
+  // Strip trailing " (N)" suffix — used to identify the "family" of a name.
+  // "MOB 1 (2)" → "MOB 1", "B (3)" → "B", "B" → "B".
+  static String _baseName(String name) =>
+      name.replaceAll(RegExp(r'\s+\(\d+\)$'), '');
+
   /// Import parsed GPX waypoints.
   ///
-  /// Duplicate rules (applied in order):
-  ///   1. Position duplicate: any existing point within ~10 m → skip.
-  ///      This prevents re-importing "MOB 1" after it was already saved as
-  ///      "MOB 1 (2)" at the same position.
-  ///   2. Name conflict: same name, distinct position → rename "Name (2)",
-  ///      "Name (3)", …  The existing waypoint is never modified.
-  ///   3. New point → imported as-is.
-  ///
-  /// Returns counts: added / skipped (position dup) / renamed (name conflict).
+  /// Duplicate detection uses BASE NAMES (suffix-stripped) and positions:
+  ///   - Position AND base-name match → exact duplicate → skip; mark the
+  ///     EXISTING point with a DUPE badge.
+  ///   - Position match but different base name → both coexist; import as NEW.
+  ///   - No position match but base-name conflict → rename "Base (N)"; import as NEW.
+  ///   - No conflict → import as-is; mark as NEW.
   ({int added, int skipped, int renamed}) importWaypoints(List<GpxWaypoint> items) {
-    // New import batch replaces any previous highlight.
     _lastImportIds.clear();
-    _highlightedIds.clear();
+    _newlyAddedIds.clear();
+    _dupFoundIds.clear();
 
     int added = 0, skipped = 0, renamed = 0;
     final baseMs = DateTime.now().millisecondsSinceEpoch;
     const tol = 0.0001; // ~10 m in degrees
 
     for (final item in items) {
-      // 1. Position duplicate — skip regardless of name.
-      if (_waypoints.any((e) =>
+      final baseIn = _baseName(item.name);
+
+      // 1. Position + base-name match → exact duplicate.
+      //    The EXISTING point gets a DUPE badge so the user can see what was skipped.
+      final posMatches = _waypoints.where((e) =>
           (e.lat - item.lat).abs() < tol &&
-          (e.lon - item.lon).abs() < tol)) {
+          (e.lon - item.lon).abs() < tol);
+      final exactDup = posMatches
+          .where((e) => _baseName(e.name) == baseIn)
+          .firstOrNull;
+      if (exactDup != null) {
+        _dupFoundIds.add(exactDup.id);
         skipped++;
         continue;
       }
 
-      // 2. Name conflict — rename the incoming point.
+      // 2. No exact duplicate → will import.
+      //    Base-name conflict (regardless of position) → rename "Base (N)".
       String name = item.name;
-      if (_waypoints.any((e) => e.name == name)) {
+      if (_waypoints.any((e) => _baseName(e.name) == baseIn)) {
+        final base = _baseName(name);
         int n = 2;
-        while (_waypoints.any((e) => e.name == '$name ($n)')) n++;
-        name = '$name ($n)';
+        while (_waypoints.any((e) => e.name == '$base ($n)')) n++;
+        name = '$base ($n)';
         renamed++;
       }
 
       final id = '${baseMs + added}';
       _waypoints.add(Waypoint(
-        id: id,
-        name: name,
-        lat: item.lat,
-        lon: item.lon,
-        timestamp: item.time,
+        id: id, name: name, lat: item.lat, lon: item.lon, timestamp: item.time,
       ));
+      _newlyAddedIds.add(id);
       _lastImportIds.add(id);
-      _highlightedIds.add(id);
       added++;
     }
     if (added > 0) _persist();
