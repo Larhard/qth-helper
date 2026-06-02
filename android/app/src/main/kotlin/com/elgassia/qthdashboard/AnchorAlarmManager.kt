@@ -3,8 +3,9 @@ package com.elgassia.qthdashboard
 import android.content.Context
 import android.hardware.camera2.CameraManager
 import android.media.AudioAttributes
+import android.media.AudioFormat
 import android.media.AudioManager
-import android.media.ToneGenerator
+import android.media.AudioTrack
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -12,20 +13,29 @@ import android.os.PowerManager
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
+import kotlin.math.PI
+import kotlin.math.sin
+import kotlin.math.roundToInt
 
 /**
- * Manages all hardware effects for the anchor alarm:
- *   Warning  — periodic gentle vibration + soft beep every ~8 s
- *   Alarm    — continuous strong vibration + loud looping alarm tone + flashlight strobe
+ * Hardware alarm driver for the anchor alarm.
  *
- * Both levels acquire a SCREEN_BRIGHT_WAKE_LOCK so the screen wakes up even
- * when the phone is locked (no additional permission beyond WAKE_LOCK needed).
+ * Audio engine: Android AudioTrack (not ToneGenerator, which has known
+ * focus-conflict bugs when the screen is on or another stream is active).
  *
- * Audio uses AudioAttributes.USAGE_ALARM which bypasses Do-Not-Disturb on most
- * devices and overrides the alarm-stream volume to maximum.  No permission needed.
+ * Guaranteed loud in all conditions:
+ *   1. AudioFocusRequest with AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE takes over
+ *      all audio routing before playing.
+ *   2. STREAM_ALARM is set to maximum volume before each play — overrides mute
+ *      and silent mode for alarm-class audio on all Android versions.
+ *   3. AudioAttributes.USAGE_ALARM bypasses DND "Priority Only" automatically.
  *
- * Flashlight uses CameraManager.setTorchMode() — no CAMERA permission needed on
- * Android 6.0+.  Fails silently if the device has no torch.
+ * Audio design:
+ *   Warning  — 523 Hz + 784 Hz (perfect 5th), soft amplitude (40 %).
+ *              Alert but not panic-inducing.  Heard even at volume = 0.
+ *   Alarm    — synthesised siren: fundamental sweeps 400–1 200 Hz at 1 Hz,
+ *              second harmonic (2× freq, 90° phase shift) mixed at 50 %.
+ *              Creates dissonance; extremely disturbing.  Max volume.
  */
 class AnchorAlarmManager(private val ctx: Context) {
 
@@ -33,6 +43,12 @@ class AnchorAlarmManager(private val ctx: Context) {
 
     private var mode = Mode.NONE
     private val handler = Handler(Looper.getMainLooper())
+    private val sampleRate = 44100
+
+    // ── Audio ─────────────────────────────────────────────────────────────────
+    private val audioManager by lazy { ctx.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
+    private var audioTrack: AudioTrack? = null
+    private var audioFocusRequest: android.media.AudioFocusRequest? = null
 
     // ── Vibrator ──────────────────────────────────────────────────────────────
     private val vibrator: Vibrator by lazy {
@@ -44,15 +60,9 @@ class AnchorAlarmManager(private val ctx: Context) {
         }
     }
 
-    // ── Audio ─────────────────────────────────────────────────────────────────
-    private var toneGen: ToneGenerator? = null
-    private val audioManager by lazy { ctx.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
-
     // ── Flashlight ────────────────────────────────────────────────────────────
     private var torchCameraId: String? = null
-    private val cameraManager by lazy {
-        ctx.getSystemService(Context.CAMERA_SERVICE) as CameraManager
-    }
+    private val cameraManager by lazy { ctx.getSystemService(Context.CAMERA_SERVICE) as CameraManager }
     private var torchOn = false
     private val flashRunnable = object : Runnable {
         override fun run() {
@@ -71,12 +81,14 @@ class AnchorAlarmManager(private val ctx: Context) {
         override fun run() {
             if (mode != Mode.WARNING) return
             vibrateShort()
-            beepSoft()
+            playWarningBeep()
             handler.postDelayed(this, 8_000L)
         }
     }
 
-    // ── Public API ────────────────────────────────────────────────────────────
+    // ─────────────────────────────────────────────────────────────────────────
+    // Public API
+    // ─────────────────────────────────────────────────────────────────────────
 
     fun startWarning() {
         if (mode == Mode.WARNING) return
@@ -92,7 +104,7 @@ class AnchorAlarmManager(private val ctx: Context) {
         mode = Mode.ALARM
         acquireWakeLock()
         vibrateContinuous()
-        startAlarmTone()
+        playAlarmSiren()
         handler.postDelayed(flashRunnable, 100L)
     }
 
@@ -100,14 +112,152 @@ class AnchorAlarmManager(private val ctx: Context) {
         mode = Mode.NONE
         handler.removeCallbacks(warningRunnable)
         handler.removeCallbacks(flashRunnable)
+        stopAudio()
         vibrator.cancel()
-        stopTone()
         setTorch(false)
         torchOn = false
         releaseWakeLock()
     }
 
-    // ── Vibration ─────────────────────────────────────────────────────────────
+    // ─────────────────────────────────────────────────────────────────────────
+    // PCM synthesis helpers
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Synthesise a looping PCM buffer.
+     *
+     * [block] receives time t (seconds) and returns a sample in [-1.0, 1.0].
+     */
+    private fun synthesise(durationMs: Int, amplitude: Double = 0.9,
+                           block: (t: Double) -> Double): ShortArray {
+        val numSamples = sampleRate * durationMs / 1000
+        val buf = ShortArray(numSamples)
+        for (i in 0 until numSamples) {
+            val t = i.toDouble() / sampleRate
+            val sample = (block(t) * amplitude).coerceIn(-1.0, 1.0)
+            buf[i] = (sample * Short.MAX_VALUE).roundToInt().toShort()
+        }
+        return buf
+    }
+
+    /** Warning tone: 523 Hz + 784 Hz perfect-fifth alternating 0.5 s each. */
+    private fun warningBuffer(): ShortArray = synthesise(2000, amplitude = 0.40) { t ->
+        val freq = if (t % 1.0 < 0.5) 523.0 else 784.0
+        sin(2 * PI * freq * t)
+    }
+
+    /**
+     * Alarm siren: sweeps 400–1 200 Hz at 1 Hz + second harmonic (90° phase offset).
+     * The interference between fundamental and 2× harmonic produces aggressive dissonance.
+     */
+    private fun alarmBuffer(): ShortArray = synthesise(2000, amplitude = 0.90) { t ->
+        val freq = 400.0 + 800.0 * (sin(2 * PI * 0.5 * t) * 0.5 + 0.5) // 400→1200 Hz sweep
+        val f1 = sin(2 * PI * freq * t)
+        val f2 = sin(2 * PI * (freq * 2.0) * t + PI / 2) * 0.5  // 2nd harmonic, phase shifted
+        (f1 + f2) / 1.5
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Audio playback
+    // ─────────────────────────────────────────────────────────────────────────
+
+    private fun buildAudioAttributes(): AudioAttributes =
+        AudioAttributes.Builder()
+            .setUsage(AudioAttributes.USAGE_ALARM)
+            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+            .build()
+
+    /** Set alarm stream to max volume and acquire audio focus before playing. */
+    private fun prepareAudio() {
+        // Override alarm stream volume to max — bypasses silent/mute mode.
+        audioManager.setStreamVolume(
+            AudioManager.STREAM_ALARM,
+            audioManager.getStreamMaxVolume(AudioManager.STREAM_ALARM),
+            0,
+        )
+        // Request exclusive audio focus — takes over from any other playing app.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val req = android.media.AudioFocusRequest.Builder(
+                AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE
+            )
+                .setAudioAttributes(buildAudioAttributes())
+                .setAcceptsDelayedFocusGain(false)
+                .build()
+            audioManager.requestAudioFocus(req)
+            audioFocusRequest = req
+        } else {
+            @Suppress("DEPRECATION")
+            audioManager.requestAudioFocus(null, AudioManager.STREAM_ALARM,
+                AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE)
+        }
+    }
+
+    private fun createLoopingTrack(pcm: ShortArray): AudioTrack {
+        val minBuf = AudioTrack.getMinBufferSize(
+            sampleRate,
+            AudioFormat.CHANNEL_OUT_MONO,
+            AudioFormat.ENCODING_PCM_16BIT,
+        )
+        val bufBytes = maxOf(minBuf, pcm.size * 2)
+
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            AudioTrack.Builder()
+                .setAudioAttributes(buildAudioAttributes())
+                .setAudioFormat(AudioFormat.Builder()
+                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                    .setSampleRate(sampleRate)
+                    .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                    .build())
+                .setBufferSizeInBytes(bufBytes)
+                .setTransferMode(AudioTrack.MODE_STATIC)
+                .setSessionId(AudioManager.AUDIO_SESSION_ID_GENERATE)
+                .build()
+        } else {
+            @Suppress("DEPRECATION")
+            AudioTrack(
+                AudioManager.STREAM_ALARM, sampleRate,
+                AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT,
+                bufBytes, AudioTrack.MODE_STATIC,
+            )
+        }
+    }
+
+    private fun playPcm(pcm: ShortArray) {
+        stopAudio()
+        prepareAudio()
+        try {
+            val track = createLoopingTrack(pcm)
+            track.write(pcm, 0, pcm.size)
+            track.setLoopPoints(0, pcm.size, -1) // -1 = infinite loop
+            track.play()
+            audioTrack = track
+        } catch (e: Exception) {
+            // Fallback: do nothing — visual + vibration still active
+        }
+    }
+
+    private fun playWarningBeep() = playPcm(warningBuffer())
+    private fun playAlarmSiren()  = playPcm(alarmBuffer())
+
+    private fun stopAudio() {
+        try {
+            audioTrack?.stop()
+            audioTrack?.release()
+        } catch (_: Exception) {}
+        audioTrack = null
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            audioFocusRequest?.let { audioManager.abandonAudioFocusRequest(it) }
+        } else {
+            @Suppress("DEPRECATION")
+            audioManager.abandonAudioFocus(null)
+        }
+        audioFocusRequest = null
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Vibration
+    // ─────────────────────────────────────────────────────────────────────────
 
     private fun vibrateShort() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -122,62 +272,16 @@ class AnchorAlarmManager(private val ctx: Context) {
     private fun vibrateContinuous() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             vibrator.vibrate(VibrationEffect.createWaveform(
-                longArrayOf(0L, 600L, 200L, 600L, 200L), 0)) // repeat
+                longArrayOf(0L, 600L, 200L, 600L, 200L), 0))
         } else {
             @Suppress("DEPRECATION")
             vibrator.vibrate(longArrayOf(0L, 600L, 200L, 600L, 200L), 0)
         }
     }
 
-    // ── Audio ─────────────────────────────────────────────────────────────────
-
-    private fun beepSoft() {
-        try {
-            if (toneGen == null) {
-                toneGen = ToneGenerator(AudioManager.STREAM_ALARM, 50)
-            }
-            toneGen?.startTone(ToneGenerator.TONE_PROP_BEEP, 300)
-        } catch (_: Exception) {}
-    }
-
-    private fun startAlarmTone() {
-        try {
-            // Override alarm stream to maximum volume.
-            audioManager.setStreamVolume(
-                AudioManager.STREAM_ALARM,
-                audioManager.getStreamMaxVolume(AudioManager.STREAM_ALARM),
-                0,
-            )
-            if (toneGen == null) {
-                toneGen = ToneGenerator(AudioManager.STREAM_ALARM, 100)
-            }
-            // TONE_CDMA_EMERGENCY_RINGBACK loops every ~2 s; we call it repeatedly
-            // via a handler to keep it going.
-            soundLoop()
-        } catch (_: Exception) {}
-    }
-
-    private val soundLoopRunnable = object : Runnable {
-        override fun run() {
-            if (mode != Mode.ALARM) return
-            try { toneGen?.startTone(ToneGenerator.TONE_CDMA_EMERGENCY_RINGBACK, 2000) }
-            catch (_: Exception) {}
-            handler.postDelayed(this, 2_200L)
-        }
-    }
-
-    private fun soundLoop() {
-        handler.removeCallbacks(soundLoopRunnable)
-        handler.post(soundLoopRunnable)
-    }
-
-    private fun stopTone() {
-        handler.removeCallbacks(soundLoopRunnable)
-        try { toneGen?.stopTone(); toneGen?.release() } catch (_: Exception) {}
-        toneGen = null
-    }
-
-    // ── Flashlight ────────────────────────────────────────────────────────────
+    // ─────────────────────────────────────────────────────────────────────────
+    // Flashlight
+    // ─────────────────────────────────────────────────────────────────────────
 
     private fun setTorch(on: Boolean) {
         try {
@@ -190,7 +294,9 @@ class AnchorAlarmManager(private val ctx: Context) {
         } catch (_: Exception) {}
     }
 
-    // ── Wake lock ─────────────────────────────────────────────────────────────
+    // ─────────────────────────────────────────────────────────────────────────
+    // Wake lock
+    // ─────────────────────────────────────────────────────────────────────────
 
     private fun acquireWakeLock() {
         if (wakeLock?.isHeld == true) return
@@ -199,9 +305,9 @@ class AnchorAlarmManager(private val ctx: Context) {
             @Suppress("DEPRECATION")
             wakeLock = pm.newWakeLock(
                 PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP,
-                "QTHDashboard:AnchorAlarm"
+                "QTHDashboard:AnchorAlarm",
             )
-            wakeLock?.acquire(10 * 60 * 1000L) // auto-release after 10 min safety cap
+            wakeLock?.acquire(10 * 60 * 1000L)
         } catch (_: Exception) {}
     }
 

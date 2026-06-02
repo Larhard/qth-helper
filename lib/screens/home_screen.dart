@@ -366,9 +366,15 @@ class _HomeScreenState extends State<HomeScreen>
   void _onStaleTick(Timer _) {
     if (!mounted) return;
     final sec = DateTime.now().difference(_lastGpsFix).inSeconds;
-    // Conditional: only rebuilds when the stale counter actually changes.
-    // When GPS is fresh, sec stays 0 → no extra rebuilds beyond GPS updates.
+    // Conditional rebuild: only when the stale counter actually changes.
     if (sec != _gpsStaleSeconds) setState(() => _gpsStaleSeconds = sec);
+
+    // GPS keep-alive while anchoring: Android GPS receivers can stop delivering
+    // updates when the device is stationary (chipset power-saving).  Requesting
+    // a fresh single-fix every 20 s wakes the receiver without continuous drain.
+    if (AnchorService.instance.isActive && sec > 0 && sec % 20 == 0) {
+      _requestImmediateGpsFix();
+    }
   }
 
   // ── Stream init ───────────────────────────────────────────────────────────
@@ -1244,15 +1250,15 @@ class _HomeScreenState extends State<HomeScreen>
           _divider(),
           _coordsSection(),
           _divider(),
-          // When anchoring, city/nav are deprioritised — show a compact one-line city row
-          // and hide the nav waypoint (both accessible via waypoints screen).
+          // When anchoring: compact city + compact nav waypoint + anchor card (priority).
+          // When normal: full city section.
           if (_nearestCity != null)
             anchoring
                 ? _citySectionCompact(_nearestCity!)
                 : _citySection(_nearestCity!),
-          // Anchor card — only when active; takes priority over nav waypoint
           if (anchoring) ...[
-            const SizedBox(height: 6),
+            _navWptCompact(pos),   // compact bearing row for nav waypoint (if active)
+            const SizedBox(height: 4),
             _anchorCard(true),
           ],
           Expanded(
@@ -1266,7 +1272,6 @@ class _HomeScreenState extends State<HomeScreen>
                   ),
                   child: SingleChildScrollView(
                     reverse: true,
-                    // When anchoring, hide nav waypoint to save space.
                     child: anchoring ? _wptSectionAnchorMode(pos) : _wptSection(pos),
                   ),
                 ),
@@ -1274,6 +1279,37 @@ class _HomeScreenState extends State<HomeScreen>
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  // Compact one-liner for nav waypoint bearing when anchoring.
+  // Shows arrow + name + bearing + distance in a single tight row.
+  Widget _navWptCompact(Position pos) {
+    final nav = WaypointService.instance.active;
+    if (nav == null) return const SizedBox.shrink();
+    final b = bearing(pos.latitude, pos.longitude, nav.lat, nav.lon);
+    final d = haversineKm(pos.latitude, pos.longitude, nav.lat, nav.lon);
+    final navColor = _dayMode ? kDNav : kN1;
+    return GestureDetector(
+      onLongPress: () => _openWaypoints(),
+      behavior: HitTestBehavior.opaque,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 3),
+        child: Row(children: [
+          _arrowWithRelRing(b, navColor, 22),
+          const SizedBox(width: 6),
+          Expanded(child: Text(nav.name,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 12, color: navColor, fontWeight: FontWeight.w600))),
+          Text('${b.round()}°',
+              style: TextStyle(fontSize: 12, color: navColor.withValues(alpha: 0.7),
+                  fontFeatures: const [FontFeature.tabularFigures()])),
+          const SizedBox(width: 6),
+          Text(formatDistanceUnit(d, _speedUnit),
+              style: TextStyle(fontSize: 12, color: navColor,
+                  fontFeatures: const [FontFeature.tabularFigures()])),
+        ]),
       ),
     );
   }
@@ -1388,6 +1424,8 @@ class _HomeScreenState extends State<HomeScreen>
                           if (!AnchorService.instance.isActive)
                             _navWptSectionLandscape(pos),
                           if (AnchorService.instance.isActive) ...[
+                            _navWptCompact(pos),   // compact waypoint bearing row
+                            const SizedBox(height: 4),
                             _anchorCard(false),
                             const SizedBox(height: 4),
                           ],
