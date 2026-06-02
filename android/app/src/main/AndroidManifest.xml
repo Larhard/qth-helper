@@ -14,6 +14,13 @@
          is locked, even when a foreground service is running. The user must grant
          "Allow all the time" — requested at runtime when enabling LIVE mode. -->
     <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+    <!-- Anchor alarm: vibration, audio, torch, screen wake -->
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.FLASHLIGHT" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+    <uses-feature android:name="android.hardware.camera.flash" android:required="false" />
 
     <application
         android:label="QTH Dashboard"

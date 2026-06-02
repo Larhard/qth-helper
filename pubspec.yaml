@@ -1,7 +1,7 @@
 name: qth_dashboard
 description: GPS navigation dashboard — heading, coordinates, IARU/MGRS locator, city finder, waypoints.
 publish_to: 'none'
-version: 1.1.0+3
+version: 1.1.1+1
 
 environment:
   sdk: '>=3.0.0 <4.0.0'

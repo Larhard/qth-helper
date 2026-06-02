@@ -55,7 +55,7 @@ class AboutScreen extends StatelessWidget {
                   fontWeight: FontWeight.w700,
                   color: _cPrimary)),
           const SizedBox(height: 4),
-          Text('v1.1.0',
+          Text('v1.1.1',
               style: TextStyle(fontSize: 13, color: _cDim)),
           const SizedBox(height: 12),
           _disclaimer(),
@@ -184,7 +184,7 @@ class AboutScreen extends StatelessWidget {
                   ),
                   child: const LicensePage(
                     applicationName: 'QTH Dashboard',
-                    applicationVersion: 'v1.1.0',
+                    applicationVersion: 'v1.1.1',
                     applicationLegalese:
                         '© 2026 Bartłomiej Puget <larhard@gmail.com>\n\n'
                         'City data © GeoNames (CC BY 4.0)\n'

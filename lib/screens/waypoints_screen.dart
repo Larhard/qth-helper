@@ -6,6 +6,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import '../utils/gpx_utils.dart';
+import '../services/anchor_service.dart';
 import 'about_screen.dart';
 import '../models/waypoint.dart';
 import '../services/waypoint_service.dart';
@@ -21,6 +22,10 @@ class WaypointsScreen extends StatefulWidget {
   final LocatorType locatorType;
   final bool timeUtc;
   final bool dayMode;
+  /// Called when the user confirms a new anchor drop or updates anchor settings.
+  final void Function(double lat, double lon, double radiusM, double warnFrac)? onAnchorDrop;
+  /// Called when the user taps "Lift anchor" in the setup sheet.
+  final VoidCallback? onAnchorLift;
 
   const WaypointsScreen({
     super.key,
@@ -30,6 +35,8 @@ class WaypointsScreen extends StatefulWidget {
     required this.locatorType,
     required this.timeUtc,
     required this.dayMode,
+    this.onAnchorDrop,
+    this.onAnchorLift,
   });
 
   @override
@@ -241,6 +248,32 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
         icon: const Icon(Icons.add_location_alt_outlined),
         tooltip: 'Add waypoint',
         onPressed: () => _showEditSheet(null),
+      ),
+      // Anchor alarm — long-press required to prevent accidental activation.
+      GestureDetector(
+        onLongPress: () {
+          if (widget.currentPosition == null) {
+            _snack('No GPS fix yet — cannot drop anchor without a position.');
+            return;
+          }
+          _showAnchorSetupSheet();
+        },
+        onTap: () => _snack(
+          AnchorService.instance.isActive
+              ? 'Anchor is active. Long-press to change settings.'
+              : 'Long-press the anchor icon to drop anchor.',
+          duration: const Duration(milliseconds: 1800),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          child: Icon(
+            Icons.anchor,
+            color: AnchorService.instance.isActive
+                ? (_day ? kDPort : kN1)
+                : _cTertiary,
+            size: 24,
+          ),
+        ),
       ),
       IconButton(
         icon: Icon(Icons.file_download_outlined, color: _cTertiary),
@@ -471,6 +504,144 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
     ),   // ListTile
     ),   // Theme
     );   // DecoratedBox
+  }
+
+  // ── Anchor setup ─────────────────────────────────────────────────────────
+  void _showAnchorSetupSheet() {
+    final pos   = widget.currentPosition!;
+    final svc   = AnchorService.instance;
+    final isActive = svc.isActive;
+    // Initialise sliders from existing or default values.
+    double radius   = isActive ? svc.radiusM         : 50.0;
+    double warnFrac = isActive ? svc.warningFraction  : 0.80;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: _day ? kDSheetBg : kNSheet,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(12))),
+      builder: (ctx) => StatefulBuilder(
+        builder: (_, setS) => Padding(
+          padding: EdgeInsets.fromLTRB(
+              24, 20, 24, MediaQuery.of(ctx).viewInsets.bottom + 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(isActive ? 'Anchor settings' : 'Drop anchor',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700,
+                      color: _day ? kDFg0 : kN1)),
+              const SizedBox(height: 4),
+              Text(
+                isActive
+                    ? 'Drag will adjust alarm thresholds. GPS-on-lock stays active.'
+                    : 'Anchor will be placed at your current GPS position.\n'
+                      'GPS-on-lock is automatically enabled while anchored.',
+                style: TextStyle(fontSize: 12, color: _day ? kDFg3 : kN3, height: 1.5),
+              ),
+              const SizedBox(height: 20),
+
+              // ── Alarm radius ────────────────────────────────────────────
+              Row(children: [
+                Text('Alarm radius', style: TextStyle(fontSize: 13, color: _day ? kDFg2 : kN2)),
+                const Spacer(),
+                Text('${radius.round()} m',
+                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700,
+                        color: _day ? kDFg0 : kN1)),
+              ]),
+              SliderTheme(
+                data: SliderTheme.of(ctx).copyWith(
+                  activeTrackColor: _day ? kDPort  : kN1,
+                  thumbColor:       _day ? kDPort  : kN0,
+                  inactiveTrackColor: _day ? kDDiv : kNDiv,
+                ),
+                child: Slider(
+                  value: radius.clamp(10.0, 1000.0),
+                  min: 10, max: 1000,
+                  divisions: 99,
+                  onChanged: (v) => setS(() => radius = v),
+                ),
+              ),
+              Row(children: [
+                Text('10 m', style: TextStyle(fontSize: 10, color: _day ? kDFg4 : kN4)),
+                const Spacer(),
+                Text('1 000 m', style: TextStyle(fontSize: 10, color: _day ? kDFg4 : kN4)),
+              ]),
+              const SizedBox(height: 16),
+
+              // ── Warning threshold ───────────────────────────────────────
+              Row(children: [
+                Text('Warning at', style: TextStyle(fontSize: 13, color: _day ? kDFg2 : kN2)),
+                const Spacer(),
+                Text('${(warnFrac * 100).round()} % of radius'
+                    ' (${(radius * warnFrac).round()} m)',
+                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600,
+                        color: _day ? kDStale : kN1)),
+              ]),
+              SliderTheme(
+                data: SliderTheme.of(ctx).copyWith(
+                  activeTrackColor: _day ? kDStale : kN2,
+                  thumbColor:       _day ? kDStale : kN1,
+                  inactiveTrackColor: _day ? kDDiv : kNDiv,
+                ),
+                child: Slider(
+                  value: warnFrac.clamp(0.5, 0.95),
+                  min: 0.5, max: 0.95,
+                  divisions: 18,
+                  onChanged: (v) => setS(() => warnFrac = v),
+                ),
+              ),
+              Row(children: [
+                Text('50 %', style: TextStyle(fontSize: 10, color: _day ? kDFg4 : kN4)),
+                const Spacer(),
+                Text('95 %', style: TextStyle(fontSize: 10, color: _day ? kDFg4 : kN4)),
+              ]),
+              const SizedBox(height: 24),
+
+              // ── Actions ─────────────────────────────────────────────────
+              Row(children: [
+                if (isActive) ...[
+                  Expanded(
+                    child: OutlinedButton(
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: _day ? kDStale : kN1,
+                        side: BorderSide(color: _day ? kDStale : kN2),
+                      ),
+                      onPressed: () {
+                        Navigator.pop(ctx);
+                        widget.onAnchorLift?.call();
+                      },
+                      child: const Text('Lift anchor'),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                ],
+                Expanded(
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: _day ? kDPort : kNBg,
+                      foregroundColor: _day ? Colors.black : kN1,
+                    ),
+                    onPressed: () {
+                      Navigator.pop(ctx);
+                      widget.onAnchorDrop?.call(
+                        pos.latitude, pos.longitude, radius, warnFrac);
+                      _snack(isActive
+                          ? 'Anchor settings updated.'
+                          : 'Anchor dropped at current position.\n'
+                            'GPS-on-lock has been enabled automatically.',
+                        duration: const Duration(seconds: 4));
+                    },
+                    child: Text(isActive ? 'Update' : 'Drop anchor'),
+                  ),
+                ),
+              ]),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   void _showEditSheet(Waypoint? existing) {

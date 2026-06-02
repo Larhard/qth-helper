@@ -17,6 +17,7 @@ import '../utils/geo_utils.dart';
 import '../utils/mgrs_utils.dart';
 import '../utils/units.dart';
 import '../utils/gpx_utils.dart';
+import '../services/anchor_service.dart';
 import '../widgets/arrow_widget.dart';
 import 'debug_screen.dart';
 import 'waypoints_screen.dart';
@@ -116,10 +117,12 @@ class _HomeScreenState extends State<HomeScreen>
   double _clearProgress = 0.0;
 
   // ── GPS-on-lock mode ───────────────────────────────────────────────────────
-  // When false (default) the GPS stream is cancelled on screen-off to save
-  // battery. When true, the stream keeps running so TRK stays live and the
-  // first glance after unlock shows fresh data instantly.
   bool _gpsOnLock = false;
+
+  // ── Anchor alarm ──────────────────────────────────────────────────────────
+  // AnimationController drives the full-screen strobe when alarm level == alarm.
+  // Runs only while alarm is active — zero overhead otherwise.
+  late final AnimationController _strobeCtrl;
 
   // ── Day / Night mode ──────────────────────────────────────────────────────
   // Day  : full-contrast palette — readable in direct sunlight.
@@ -283,6 +286,11 @@ class _HomeScreenState extends State<HomeScreen>
     _holdTicker = createTicker(_onHoldTick);
     _syncPocketLock();
     _gpsOnLock = GetStorage().read<bool>('gps_on_lock') ?? false;
+    _strobeCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 700),
+    );
+    AnchorService.instance.onStateChanged = _onAnchorStateChanged;
     _staleTimer = Timer.periodic(const Duration(seconds: 1), _onStaleTick);
     _init();
     // Check for a GPX file that was opened to launch the app (cold start).
@@ -293,6 +301,8 @@ class _HomeScreenState extends State<HomeScreen>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _holdTicker.dispose();
+    _strobeCtrl.dispose();
+    AnchorService.instance.onStateChanged = null;
     _compassNotifier.dispose();
     _posSub?.cancel();
     _compassSub?.cancel();
@@ -410,6 +420,8 @@ class _HomeScreenState extends State<HomeScreen>
   void _onPositionUpdate(Position pos) {
     _lastGpsFix = DateTime.now();
     if (_gpsStaleSeconds > 0) _gpsStaleSeconds = 0;
+    // Notify anchor service on every fix (even when screen is off).
+    AnchorService.instance.onPositionUpdate(pos.latitude, pos.longitude);
 
     // GPS course is usable above ~0.5 m/s; cache at lower threshold so the
     // secondary arrow appears even at walking pace.
@@ -814,6 +826,230 @@ class _HomeScreenState extends State<HomeScreen>
     }
   }
 
+  // ── Anchor alarm ─────────────────────────────────────────────────────────
+  void _onAnchorStateChanged() {
+    if (!mounted) return;
+    final lvl = AnchorService.instance.level;
+    if (lvl == AnchorAlarmLevel.alarm) {
+      if (!_strobeCtrl.isAnimating) _strobeCtrl.repeat(reverse: true);
+    } else {
+      if (_strobeCtrl.isAnimating) _strobeCtrl.stop();
+    }
+    setState(() {});
+  }
+
+  void _dropAnchor(double lat, double lon, double radiusM, double warnFrac) {
+    final prevGpsOnLock = _gpsOnLock;
+    if (!_gpsOnLock) {
+      _gpsOnLock = true;
+      GetStorage().write('gps_on_lock', true);
+      _enableLiveModeWithPermission();
+    }
+    AnchorService.instance.dropAnchor(
+      lat: lat, lon: lon, radiusM: radiusM, warningFraction: warnFrac,
+      prevGpsOnLock: prevGpsOnLock,
+    );
+    setState(() {});
+    _showSettingSnack(
+      'Anchor dropped · radius ${radiusM.round()} m · '
+      'warning at ${(radiusM * warnFrac).round()} m.\n'
+      'GPS-on-lock ${prevGpsOnLock ? 'was already' : 'has been'} enabled.',
+    );
+  }
+
+  void _liftAnchor() {
+    final prev = AnchorService.instance.prevGpsOnLock;
+    AnchorService.instance.liftAnchor();
+    if (!prev && _gpsOnLock) {
+      setState(() => _gpsOnLock = false);
+      GetStorage().write('gps_on_lock', false);
+    }
+    setState(() {});
+    _showSettingSnack(
+      'Anchor lifted. GPS-on-lock ${prev ? 'stays on' : 'turned off'}.',
+    );
+  }
+
+  // ── Anchor card colours ───────────────────────────────────────────────────
+  Color _anchorLevelColor(AnchorAlarmLevel lvl) => switch (lvl) {
+    AnchorAlarmLevel.alarm   => _dayMode ? kDEmg  : kN0,
+    AnchorAlarmLevel.warning => _dayMode ? kDStale : kN1,
+    AnchorAlarmLevel.idle    => _dayMode ? kDPort  : kN2,
+  };
+
+  Widget _anchorCard(bool portrait) {
+    final svc   = AnchorService.instance;
+    final dist  = svc.distanceM ?? 0.0;
+    final brg   = svc.bearingDeg ?? 0.0;
+    final r     = svc.radiusM;
+    final lvl   = svc.level;
+    final color = _anchorLevelColor(lvl);
+    final frac  = (dist / r).clamp(0.0, 1.2);
+
+    final arrowSz  = portrait ? 50.0 : 38.0;
+    final distFont = portrait ? 20.0 : 16.0;
+    final labelFont= portrait ? 11.0 : 10.0;
+
+    // Status label
+    final String status;
+    if (svc.gpsLost) {
+      status = 'GPS lost ${svc.gpsLossSeconds}s';
+    } else {
+      status = switch (lvl) {
+        AnchorAlarmLevel.alarm   => 'OUTSIDE RADIUS',
+        AnchorAlarmLevel.warning => 'WARNING',
+        AnchorAlarmLevel.idle    => 'RIDING',
+      };
+    }
+
+    return Padding(
+      padding: EdgeInsets.all(portrait ? 3 : 2),
+      child: Container(
+        padding: EdgeInsets.fromLTRB(
+            portrait ? 12 : 8, portrait ? 8 : 5,
+            portrait ? 12 : 8, portrait ? 8 : 5),
+        decoration: BoxDecoration(
+          border: Border.all(color: color.withValues(alpha: 0.55), width: 1.5),
+          borderRadius: BorderRadius.circular(6),
+        ),
+        child: Row(children: [
+          // Arrow with relative ring + progress ring overlay
+          SizedBox(
+            width: arrowSz, height: arrowSz,
+            child: Stack(alignment: Alignment.center, children: [
+              Positioned.fill(child: CustomPaint(
+                painter: _AnchorProgressPainter(frac, color, lvl),
+              )),
+              _arrowWithRelRing(brg, color, arrowSz * 0.7),
+            ]),
+          ),
+          SizedBox(width: portrait ? 12 : 8),
+          Expanded(child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(children: [
+                Icon(Icons.anchor, size: labelFont + 2, color: color),
+                const SizedBox(width: 4),
+                Text(status, style: TextStyle(
+                    fontSize: labelFont, color: color,
+                    fontWeight: FontWeight.w700, letterSpacing: 1.2)),
+              ]),
+              Row(children: [
+                Text('${dist.round()} m',
+                    style: TextStyle(fontSize: distFont, fontWeight: FontWeight.w700,
+                        color: color, fontFeatures: const [FontFeature.tabularFigures()])),
+                const SizedBox(width: 8),
+                Text('${brg.round()}°',
+                    style: TextStyle(fontSize: distFont * 0.8, color: color.withValues(alpha: 0.7),
+                        fontFeatures: const [FontFeature.tabularFigures()])),
+              ]),
+              Text('radius ${r.round()} m · warn ${svc.warningRadiusM.round()} m',
+                  style: TextStyle(fontSize: labelFont, color: color.withValues(alpha: 0.65))),
+            ],
+          )),
+          // Silence button (only during alarm)
+          if (lvl == AnchorAlarmLevel.alarm && !svc.isSilenced)
+            GestureDetector(
+              onLongPress: () => setState(() => svc.silenceAlarm()),
+              child: Padding(
+                padding: const EdgeInsets.all(8),
+                child: Icon(Icons.volume_off, color: color, size: 20),
+              ),
+            ),
+        ]),
+      ),
+    );
+  }
+
+  // ── Full-screen alarm strobe overlay ─────────────────────────────────────
+  Widget _buildAlarmOverlay() {
+    return AnimatedBuilder(
+      animation: _strobeCtrl,
+      builder: (_, __) {
+        final bright = _strobeCtrl.value > 0.5;
+        final bg = bright
+            ? (_dayMode ? Colors.white              : Colors.black)
+            : (_dayMode ? kDEmg.withValues(alpha:0.9): kN0);
+        return Positioned.fill(
+          child: Container(
+            color: bg,
+            child: SafeArea(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.anchor, size: 72, color: bright
+                      ? (_dayMode ? kDEmg : kN0)
+                      : (_dayMode ? Colors.white : Colors.black)),
+                  const SizedBox(height: 16),
+                  Text('ANCHOR ALARM',
+                      style: TextStyle(
+                        fontSize: 32, fontWeight: FontWeight.w900,
+                        color: bright
+                            ? (_dayMode ? kDEmg : kN0)
+                            : (_dayMode ? Colors.white : Colors.black),
+                        letterSpacing: 4,
+                      )),
+                  const SizedBox(height: 8),
+                  Text(
+                    AnchorService.instance.gpsLost
+                        ? 'GPS signal lost ${AnchorService.instance.gpsLossSeconds}s'
+                        : 'Outside anchor radius!\n'
+                          '${AnchorService.instance.distanceM?.round() ?? 0} m '
+                          'from anchor point',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 18,
+                      color: bright
+                          ? (_dayMode ? kDEmg : kN0)
+                          : (_dayMode ? Colors.white : Colors.black),
+                    ),
+                  ),
+                  const SizedBox(height: 48),
+                  // Silence action — hold 3 s
+                  GestureDetector(
+                    onLongPress: () {
+                      AnchorService.instance.silenceAlarm();
+                      _strobeCtrl.stop();
+                      setState(() {});
+                    },
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
+                      decoration: BoxDecoration(
+                        border: Border.all(
+                          color: bright
+                              ? (_dayMode ? kDEmg : kN0)
+                              : (_dayMode ? Colors.white : Colors.black),
+                          width: 2,
+                        ),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text('HOLD 3s TO SILENCE',
+                          style: TextStyle(
+                            fontSize: 16, fontWeight: FontWeight.w800, letterSpacing: 2,
+                            color: bright
+                                ? (_dayMode ? kDEmg : kN0)
+                                : (_dayMode ? Colors.white : Colors.black),
+                          )),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  TextButton(
+                    onPressed: _liftAnchor,
+                    child: Text('Lift anchor',
+                        style: TextStyle(fontSize: 14,
+                            color: bright
+                                ? (_dayMode ? kDEmg.withValues(alpha: 0.7) : kN2)
+                                : (_dayMode ? Colors.white54 : kN3))),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   static String _gpxImportSummary(
       ({int added, int skipped, int renamed}) r, int total) {
     final parts = <String>[];
@@ -836,6 +1072,8 @@ class _HomeScreenState extends State<HomeScreen>
           locatorType: _locatorType,
           timeUtc: _timeUtc,
           dayMode: _dayMode,
+          onAnchorDrop: (lat, lon, r, wf) => _dropAnchor(lat, lon, r, wf),
+          onAnchorLift: _liftAnchor,
         ),
       ),
     );
@@ -907,6 +1145,10 @@ class _HomeScreenState extends State<HomeScreen>
         child: Stack(
           children: [
             isLandscape ? _buildLandscape(pos) : _buildPortrait(pos),
+            // Anchor alarm overlay — shown on top of everything when alarm is active.
+            if (AnchorService.instance.level == AnchorAlarmLevel.alarm &&
+                !AnchorService.instance.isSilenced)
+              _buildAlarmOverlay(),
             // Waypoints — 48 × 48 hit area, icon visually at top-right corner.
             Positioned(
               top: 0,
@@ -992,6 +1234,7 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   Widget _buildPortrait(Position pos) {
+    final anchoring = AnchorService.instance.isActive;
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 14, 20, 10),
       child: Column(
@@ -1001,9 +1244,17 @@ class _HomeScreenState extends State<HomeScreen>
           _divider(),
           _coordsSection(),
           _divider(),
-          if (_nearestCity != null) _citySection(_nearestCity!),
-          // Expanded + constrained scroll: the tracking section stays at the bottom
-          // but can scroll when both nav-waypoint and MOB emergency are active.
+          // When anchoring, city/nav are deprioritised — show a compact one-line city row
+          // and hide the nav waypoint (both accessible via waypoints screen).
+          if (_nearestCity != null)
+            anchoring
+                ? _citySectionCompact(_nearestCity!)
+                : _citySection(_nearestCity!),
+          // Anchor card — only when active; takes priority over nav waypoint
+          if (anchoring) ...[
+            const SizedBox(height: 6),
+            _anchorCard(true),
+          ],
           Expanded(
             child: Align(
               alignment: Alignment.bottomLeft,
@@ -1015,13 +1266,58 @@ class _HomeScreenState extends State<HomeScreen>
                   ),
                   child: SingleChildScrollView(
                     reverse: true,
-                    child: _wptSection(pos),
+                    // When anchoring, hide nav waypoint to save space.
+                    child: anchoring ? _wptSectionAnchorMode(pos) : _wptSection(pos),
                   ),
                 ),
               ),
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  // Compact one-liner for city when anchoring (saves space).
+  Widget _citySectionCompact(NearestCity nc) {
+    return GestureDetector(
+      onTap: _toggleCityMode,
+      onLongPress: () => _showCityDetails(nc),
+      behavior: HitTestBehavior.opaque,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        child: Row(children: [
+          Icon(Icons.location_city, size: 14, color: _cityColor),
+          const SizedBox(width: 6),
+          Expanded(child: Text(nc.city.name,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 13, color: _cityColor, fontWeight: FontWeight.w600))),
+          Text(formatDistanceUnit(nc.distKm, _speedUnit),
+              style: TextStyle(fontSize: 13, color: _citySubColor)),
+        ]),
+      ),
+    );
+  }
+
+  // Waypoint section used while anchoring — MOB only (nav waypoint hidden).
+  Widget _wptSectionAnchorMode(Position pos) {
+    final mob = WaypointService.instance.emergency;
+    if (mob != null) {
+      return Column(mainAxisSize: MainAxisSize.min, children: [
+        _wptCard(pos, mob, portrait: true),
+      ]);
+    }
+    return SizedBox(
+      width: double.infinity, height: 80,
+      child: ElevatedButton(
+        onPressed: _addWaypoint,
+        style: ElevatedButton.styleFrom(
+          backgroundColor: _cMobBg, foregroundColor: _cMobText,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+          elevation: 0,
+        ),
+        child: const Text('MOB',
+            style: TextStyle(fontSize: 38, fontWeight: FontWeight.w900, letterSpacing: 5)),
       ),
     );
   }
@@ -1084,10 +1380,17 @@ class _HomeScreenState extends State<HomeScreen>
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           if (_nearestCity != null) ...[
-                            _citySectionLandscape(_nearestCity!),
+                            AnchorService.instance.isActive
+                                ? _citySectionCompact(_nearestCity!)
+                                : _citySectionLandscape(_nearestCity!),
                             _dividerCompact(),
                           ],
-                          _navWptSectionLandscape(pos),
+                          if (!AnchorService.instance.isActive)
+                            _navWptSectionLandscape(pos),
+                          if (AnchorService.instance.isActive) ...[
+                            _anchorCard(false),
+                            const SizedBox(height: 4),
+                          ],
                         ],
                       ),
                     ),
@@ -2772,4 +3075,47 @@ class _RelativeDotRingPainter extends CustomPainter {
       old.relBearing != relBearing ||
       old.color      != color      ||
       old.dayMode    != dayMode;
+}
+
+// ── Anchor radius progress ring ───────────────────────────────────────────────
+// Drawn inside the anchor card behind the bearing arrow.
+// frac = 0 (at anchor) → 1 (at boundary) → >1 (outside — alarm).
+class _AnchorProgressPainter extends CustomPainter {
+  final double frac;
+  final Color color;
+  final AnchorAlarmLevel level;
+  const _AnchorProgressPainter(this.frac, this.color, this.level);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final cx = size.width / 2;
+    final cy = size.height / 2;
+    final r  = size.width / 2 - 3.0;
+
+    // Background track ring
+    canvas.drawCircle(Offset(cx, cy), r,
+        Paint()
+          ..color = color.withValues(alpha: 0.15)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 4.0);
+
+    // Progress arc — fills clockwise from the top
+    if (frac > 0) {
+      canvas.drawArc(
+        Rect.fromLTWH(cx - r, cy - r, r * 2, r * 2),
+        -math.pi / 2,         // start at 12 o'clock
+        2 * math.pi * frac.clamp(0.0, 1.0),
+        false,
+        Paint()
+          ..color = color.withValues(alpha: frac >= 1.0 ? 0.9 : 0.7)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 4.0
+          ..strokeCap = StrokeCap.round,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(_AnchorProgressPainter old) =>
+      old.frac != frac || old.color != color || old.level != level;
 }
