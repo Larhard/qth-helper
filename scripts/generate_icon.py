@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
 """
-Generates the QTH Helper app icon (assets/icon/app_icon.png).
+Generates the QTH Dashboard app icon (assets/icon/app_icon.png).
 
-Design: dark navy circle, 8-spoke compass rose, concentric rings,
-        the same cyan navigation arrow as used inside the app.
+Design mirrors the in-app wind-rose / bearing-ring aesthetic:
+  - Near-black circular background
+  - White bearing ring with cardinal crosshair tick marks
+  - Red arc at North (matches the wind-rose N indicator: kDEmg = #FF3333)
+  - Green heading arrow pointing up (matches GPS colour: kDGps = #55DD55)
+  - Subtle concentric inner ring for depth
 
 Run:
-    python scripts/generate_icon.py
+    python scripts/generate_icon.py          # or python3 on Linux/macOS
 """
 import os
 import math
@@ -22,115 +26,128 @@ except ImportError:
 
 SIZE = 1024
 HALF = SIZE // 2
+CX, CY = HALF, HALF
 
-# ── Canvas ──────────────────────────────────────────────────────────────────
-img = Image.new('RGBA', (SIZE, SIZE), (0, 0, 0, 0))
+# ── Palette (matches app's kD* constants) ────────────────────────────────────
+BG          = (10,  10,  10, 255)   # near-black — same as app panels
+RING        = (255, 255, 255, 110)  # white ring, ~43 % opacity
+TICK_CARD   = (255, 255, 255, 170)  # cardinal tick marks
+TICK_INTER  = (255, 255, 255,  90)  # intercardinal ticks
+NORTH_RED   = (255,  51,  51, 255)  # #FF3333 = kDEmg (North arc)
+GPS_GREEN   = ( 85, 221,  85, 255)  # #55DD55 = kDGps (arrow body)
+GPS_GLOW    = ( 85, 221,  85,  65)  # green glow behind arrow
+GPS_HILITE  = (160, 245, 160, 150)  # highlight edge on arrow tip
+INNER_RING  = (255, 255, 255,  38)  # secondary inner ring
+
+img  = Image.new('RGBA', (SIZE, SIZE), (0, 0, 0, 0))
 draw = ImageDraw.Draw(img)
 
-# ── Background circle ────────────────────────────────────────────────────────
-BG = (10, 15, 30, 255)
-draw.ellipse([0, 0, SIZE - 1, SIZE - 1], fill=BG)
+# ── Background circle ─────────────────────────────────────────────────────────
+draw.ellipse([0, 0, SIZE-1, SIZE-1], fill=BG)
 
-# ── Compass-rose spokes (8 directions) ───────────────────────────────────────
-SPOKE_COLOR = (18, 35, 65, 255)
-for angle_deg in range(0, 360, 45):
-    rad = math.radians(angle_deg)
-    sx, sy = math.sin(rad), -math.cos(rad)
-    x1 = HALF + sx * HALF * 0.08
-    y1 = HALF + sy * HALF * 0.08
-    x2 = HALF + sx * HALF * 0.86
-    y2 = HALF + sy * HALF * 0.86
-    draw.line([(x1, y1), (x2, y2)], fill=SPOKE_COLOR, width=5)
+# ── Main bearing ring ─────────────────────────────────────────────────────────
+RING_R = int(HALF * 0.76)
 
-# ── Concentric rings ─────────────────────────────────────────────────────────
-for frac, alpha in [(0.84, 35), (0.56, 22), (0.30, 14)]:
-    r = HALF * frac
-    draw.ellipse(
-        [HALF - r, HALF - r, HALF + r, HALF + r],
-        outline=(0, 110, 170, alpha),
-        width=3,
-    )
+def ring_box(r):
+    return [CX-r, CY-r, CX+r, CY+r]
 
-# ── Cardinal tick marks ───────────────────────────────────────────────────────
-TICK_COLOR = (0, 80, 120, 160)
-for angle_deg in range(0, 360, 90):
-    rad = math.radians(angle_deg)
-    sx, sy = math.sin(rad), -math.cos(rad)
-    inner = HALF * 0.78
-    outer = HALF * 0.88
-    x1 = HALF + sx * inner
-    y1 = HALF + sy * inner
-    x2 = HALF + sx * outer
-    y2 = HALF + sy * outer
-    draw.line([(x1, y1), (x2, y2)], fill=TICK_COLOR, width=8)
+draw.ellipse(ring_box(RING_R), outline=RING, width=7)
 
-# ── Navigation arrow (same proportions as the in-app ArrowWidget) ────────────
-R = HALF * 0.72   # radius that the arrow tip reaches
+# ── Inner decorative ring ─────────────────────────────────────────────────────
+INNER_R = int(HALF * 0.50)
+draw.ellipse(ring_box(INNER_R), outline=INNER_RING, width=4)
 
-def pt(dx_frac, dy_frac):
-    """Convert arrow-space fraction to pixel coordinate."""
-    return (HALF + dx_frac * R, HALF + dy_frac * R)
+# ── Cardinal (N/E/S/W) and intercardinal tick marks ───────────────────────────
+# Ticks point INWARD from the ring (matches app's bearing ring ticks).
+for i in range(8):
+    if i == 0:
+        continue  # North handled separately
+    angle_deg  = i * 45 - 90   # -90° so 0° = up
+    rad        = math.radians(angle_deg)
+    sin_a      = math.sin(rad)
+    cos_a      = math.cos(rad)
+    is_card    = (i % 2 == 0)
+    tick_len   = RING_R * (0.16 if is_card else 0.10)
+    tick_w     = 9 if is_card else 5
+    color      = TICK_CARD if is_card else TICK_INTER
+    x1 = CX + sin_a * RING_R
+    y1 = CY + cos_a * RING_R
+    x2 = CX + sin_a * (RING_R - tick_len)
+    y2 = CY + cos_a * (RING_R - tick_len)
+    draw.line([(x1, y1), (x2, y2)], fill=color, width=tick_w)
 
-ARROW_SHAPE = [
-    pt( 0.000, -1.000),   # tip
-    pt( 0.320, -0.180),   # right wing outer
-    pt( 0.110, -0.180),   # right wing inner / shaft start
-    pt( 0.110,  0.750),   # shaft bottom right
-    pt(-0.110,  0.750),   # shaft bottom left
-    pt(-0.110, -0.180),   # left wing inner / shaft start
-    pt(-0.320, -0.180),   # left wing outer
+# ── North indicator: thick red arc on ring + inward pointer ──────────────────
+# Arc spans ±22° around North (top of ring).
+# PIL arc angles: 0° = right, going clockwise; 270° = top.
+ARC_HALF = 22
+arc_start = 270 - ARC_HALF
+arc_end   = 270 + ARC_HALF
+
+# Draw the arc with multiple widths for a soft glow effect
+for w, alpha in [(30, 60), (22, 120), (14, 200), (8, 255)]:
+    col = (*NORTH_RED[:3], alpha)
+    draw.arc(ring_box(RING_R), arc_start, arc_end, fill=col, width=w)
+
+# Inward red pointer from ring centre of arc
+POINTER_LEN = RING_R * 0.22
+x1 = CX
+y1 = CY - RING_R
+x2 = CX
+y2 = CY - RING_R + POINTER_LEN
+draw.line([(x1, y1), (x2, y2)], fill=NORTH_RED, width=16)
+
+# ── Heading arrow (green, pointing up — same shape as ArrowWidget) ────────────
+AR = HALF * 0.58   # arrow radius (tip distance from centre)
+
+def ap(dx, dy):
+    return (CX + dx * AR, CY + dy * AR)
+
+ARROW = [
+    ap( 0.000, -1.000),  # tip
+    ap( 0.330, -0.200),  # right wing outer
+    ap( 0.110, -0.200),  # right wing inner / shaft
+    ap( 0.110,  0.740),  # shaft bottom-right
+    ap(-0.110,  0.740),  # shaft bottom-left
+    ap(-0.110, -0.200),  # left wing inner / shaft
+    ap(-0.330, -0.200),  # left wing outer
 ]
 
-# Soft glow behind arrow
-glow_img = Image.new('RGBA', (SIZE, SIZE), (0, 0, 0, 0))
-glow_draw = ImageDraw.Draw(glow_img)
-glow_draw.polygon(ARROW_SHAPE, fill=(0, 180, 255, 90))
-glow_blurred = glow_img.filter(ImageFilter.GaussianBlur(radius=22))
-img = Image.alpha_composite(img, glow_blurred)
-
-# Re-draw the main layers on top of the glow
+# Soft green glow layer
+glow = Image.new('RGBA', (SIZE, SIZE), (0, 0, 0, 0))
+ImageDraw.Draw(glow).polygon(ARROW, fill=GPS_GLOW)
+img = Image.alpha_composite(img, glow.filter(ImageFilter.GaussianBlur(radius=30)))
 draw = ImageDraw.Draw(img)
 
-# Arrow body — bright cyan
-draw.polygon(ARROW_SHAPE, fill=(0, 225, 255, 255))
+# Arrow body
+draw.polygon(ARROW, fill=GPS_GREEN)
 
-# Subtle highlight on the left edge of the tip for depth
-highlight = [
-    pt( 0.000, -1.000),
-    pt( 0.000, -0.180),
-    pt(-0.110, -0.180),
-    pt(-0.320, -0.180),
-]
-draw.polygon(highlight, fill=(80, 240, 255, 180))
+# Highlight on tip's left edge for depth
+draw.polygon([ap(0, -1), ap(0, -0.2), ap(-0.11, -0.2), ap(-0.33, -0.2)],
+             fill=GPS_HILITE)
 
-# ── Centre dot ───────────────────────────────────────────────────────────────
-dot_r = HALF * 0.045
-draw.ellipse(
-    [HALF - dot_r, HALF - dot_r, HALF + dot_r, HALF + dot_r],
-    fill=(0, 200, 235, 255),
-)
+# ── Centre dot ────────────────────────────────────────────────────────────────
+dot_r = HALF * 0.042
+draw.ellipse([CX-dot_r, CY-dot_r, CX+dot_r, CY+dot_r],
+             fill=(160, 245, 160, 255))
 
-# ── Outer border ring ─────────────────────────────────────────────────────────
-draw.ellipse([6, 6, SIZE - 7, SIZE - 7], outline=(0, 70, 120, 200), width=7)
+# ── Outer border ring (very subtle frame) ─────────────────────────────────────
+draw.ellipse([8, 8, SIZE-9, SIZE-9], outline=(60, 60, 60, 160), width=8)
 
 # ── Clip to circle (anti-aliased mask) ───────────────────────────────────────
 mask = Image.new('L', (SIZE, SIZE), 0)
-ImageDraw.Draw(mask).ellipse([0, 0, SIZE - 1, SIZE - 1], fill=255)
+ImageDraw.Draw(mask).ellipse([0, 0, SIZE-1, SIZE-1], fill=255)
 img.putalpha(mask)
 
-# ── Save ──────────────────────────────────────────────────────────────────────
+# ── Save flat + adaptive foreground ─────────────────────────────────────────
 out_dir = os.path.join(os.path.dirname(__file__), '..', 'assets', 'icon')
 os.makedirs(out_dir, exist_ok=True)
 
 flat_path = os.path.join(out_dir, 'app_icon.png')
-
-# Flat icon (transparent background turned to #0A0F1E for flutter_launcher_icons)
-flat = Image.new('RGB', (SIZE, SIZE), (10, 15, 30))
+flat = Image.new('RGB', (SIZE, SIZE), (10, 10, 10))
 flat.paste(img, mask=img.split()[3])
 flat.save(flat_path, 'PNG', optimize=True)
-print(f"Icon saved  → {flat_path}")
+print("Icon saved  -> " + flat_path)
 
-# Also save the RGBA version (with transparency) for adaptive foreground
 fg_path = os.path.join(out_dir, 'app_icon_fg.png')
 img.save(fg_path, 'PNG', optimize=True)
-print(f"Adaptive FG → {fg_path}")
+print("Adaptive FG -> " + fg_path)

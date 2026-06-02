@@ -18,21 +18,22 @@ and one-handed operation.
 Two display modes — long-press the arrow/rose to toggle:
 
 **Arrow mode**
-- **Primary arrow** (full colour) shows the active source
-- **Secondary arrow** (30 % opacity) shows the complementary source
-- Relative dot ring marks bearing to city, active waypoint, and MOB
+- **Primary arrow** (full colour) shows the active source; **secondary arrow** (30 % opacity) shows the other
+- Reference ring around the arrow with 4-tick crosshair (N/E/S/W absolute positions)
+- POI dots on the ring at absolute compass positions (North = 12 o'clock)
+- **Relative dot ring** around every bearing arrow (city, waypoint, MOB) shows where to turn: 12 o'clock = ahead, 3 = right, 9 = left
 
 **Wind-rose mode**
 - Compass ring rotates so your heading is always at 12 o'clock
-- **North marker**: traditional red tick + "N" label — distinct from waypoint dots
-- **Heading cursor**: fixed white triangle at 12 o'clock indicates current travel direction
-- **Secondary bearing** shown as a dash on the ring
-- Bearing dots for city / waypoint / MOB rotate with the rose
+- **North marker**: red arc on ring + inward tick pointer — traditional convention, clearly distinct from waypoint dots
+- **Heading cursor**: fixed white triangle at 12 o'clock indicates travel direction
+- **Secondary bearing** shown as a prominent dash on the ring
+- POI dots rotate with the rose (relative positions)
 
 **Heading sources** — long-press the degree readout to cycle:
-- **GPS course** (green) — used above 5.4 km/h; true-north corrected
-- **TRK** (yellow-green) — smoothed track bearing from a spatial point buffer; more stable than last-two-point GPS
-- **MAG** (white / dim red) — magnetic compass with WMM declination correction; primary when stationary
+- **GPS course** (green `#55DD55`) — used above 5.4 km/h; true-north corrected
+- **TRK** (yellow `#DDCC00`) — smoothed track bearing from a spatial point buffer; clearly distinct hue from GPS
+- **MAG** (white / dim red) — magnetic compass + WMM declination; primary when stationary
 
 ### GPS Coordinates
 - Three formats: **DD° MM.MMM'** (default), **DD.DDDDDD°**, **DD° MM' SS.SS"** — long-press to cycle
@@ -61,36 +62,53 @@ Long-press the city name to open a full detail sheet (coordinates, bearing, port
 **MOB (Man Overboard / emergency marker)**
 - Tap **MOB** to drop an emergency waypoint at the current position
 - Shows bearing, distance, coordinates (all formats), locator, and timestamp
-- **Hold the MOB card for 3 s** to clear — progress ring fills the border; release early to cancel
+- **Hold the MOB card for 3 s** to clear — animated progress ring fills the border
 - MOB is always visible at the bottom of the screen (landscape and portrait)
 
 **Navigation waypoints**
 - Open the **Waypoints screen** (pin icon, top-right) to manage saved waypoints
 - Tap a waypoint to activate as navigation target; active waypoint shows bearing and distance
-- Tap `+` to add a waypoint by coordinates
-- **Hold to delete** from the list (prevents accidental removal)
+- Tap `+` to add a waypoint by entering coordinates
 - **Hold the nav waypoint card for 3 s** to deactivate
+- **Drag the handle** to reorder the list — order persists across restarts
+- **Long-press** a waypoint to edit name and coordinates
+- **Checklist icon** in the AppBar to enter multi-select mode:
+  - Tap tiles to toggle selection; select-all / delete selected / export selected
+  - Back or × to exit multi-select mode
 
-Both MOB and navigation waypoints can be active simultaneously.
+Both MOB and a navigation waypoint can be active simultaneously.
+
+### GPX import / export
+
+- **Export** (upload icon) — generates a valid GPX 1.1 file and shares via Android share sheet (email, cloud storage, OsmAnd, Garmin, etc.)
+  - In multi-select mode: exports only selected waypoints
+- **Import** (download icon) — opens a system file picker; also works by opening a `.gpx` file from any app
+  - Only `<wpt>` waypoints are imported; track points (`<trkpt>`) and route points are ignored
+  - Duplicate detection uses **position** (within ~10 m) + **base name** (stripping ` (N)` suffixes):
+    - Position + name match → silently skipped; existing point gets an amber **DUPE** badge
+    - Name conflict, different position → imported with an auto-incremented suffix; gets a green **NEW** badge
+    - Same position, different name → both coexist; imported as **NEW**
+  - **Undo** button available for 8 s after every import
+  - Highlight badges (NEW / DUPE) persist until leaving the Waypoints screen or starting a new import
 
 ### Day / Night mode
-- **Day** — semantic colour palette: green = GPS, amber = MGRS/time, cyan = ports, orange = nav waypoints, red = emergency
-- **Night** — red-only palette (hue ≈ 0°, varying brightness); no greens, blues, or ambers; preserves rhodopsin for marine and hiking use
+- **Day** — semantic colour palette: green = GPS, yellow = TRK, amber = MGRS/time, cyan = ports, orange = nav waypoints, red = emergency
+- **Night** — red-only palette (hue ≈ 0°, varying brightness only); no greens, blues, or ambers; preserves rhodopsin for marine and hiking use
 - **Hold the moon / sun icon** to switch — deliberate hold prevents accidental activation
+- All UI elements — tooltips, dialogs, snackbars, ripples, tab highlights — follow the palette; no greys in night mode
 
-The entire UI uses a unified colour system (`kD*` day constants, `kN*` night constants in `utils/units.dart`). Changing one constant updates every screen.
+The entire UI uses a unified colour system (`kD*` day constants, `kN*` night constants in `utils/units.dart`).
 
 ### GPS on lock screen
 - GPS pauses when the screen turns off by default (saves battery on long hikes)
-- **Long-press** `GPS @ lock` to toggle — GPS keeps running via a foreground service (ON LOCK mode)
-- ON LOCK requires the *"Allow all the time"* location permission; the system prompts on first enable
+- **Long-press** `GPS @ lock` to toggle **ON LOCK** — GPS keeps running via a foreground service
+- ON LOCK requires the *"Allow all the time"* location permission; prompted on first enable
 
 ### Pocket lock
 - **Long-press** `phone @ sensor` to toggle proximity-based screen dimming
-- When enabled and the phone is in a pocket for 5 seconds: screen dims to black, touch is blocked
-- Screen restores immediately when the phone is taken out
-- Only activates when the charger is **not** connected
-- Uses brightness + touch-blocking only — no PIN required, biometric unlock works instantly
+- Phone in pocket for 5 s → screen dims to black, touch is blocked
+- Screen restores immediately when phone is taken out; charger bypasses the feature entirely
+- Uses brightness + touch-blocking only — biometric unlock works instantly
 
 ### Debug screen
 Hold the bug icon (top-left). Four tabs:
@@ -109,42 +127,41 @@ Hold the bug icon (top-left). Four tabs:
 ```
 qth_helper/
 ├── lib/
-│   ├── main.dart
+│   ├── main.dart                    # App entry; mode-aware Material theme
 │   ├── models/
-│   │   ├── city.dart            # City + port data model
+│   │   ├── city.dart
 │   │   └── waypoint.dart
 │   ├── screens/
-│   │   ├── home_screen.dart     # Main navigation display (~2 500 lines)
-│   │   ├── waypoints_screen.dart
-│   │   ├── about_screen.dart    # Legal notices and open-source licences
-│   │   └── debug_screen.dart
+│   │   ├── home_screen.dart         # Main navigation display (~2 600 lines)
+│   │   ├── waypoints_screen.dart    # Waypoint list, GPX import/export
+│   │   ├── about_screen.dart        # Legal notices and open-source licences
+│   │   └── debug_screen.dart        # 4-tab sensor / GPS / heading debug view
 │   ├── services/
-│   │   ├── city_service.dart    # Spatial grid lookup (cities and ports)
+│   │   ├── city_service.dart        # Spatial grid lookup (cities and ports)
 │   │   ├── declination_service.dart
-│   │   ├── environment_service.dart  # Sensor stream (proximity, env, motion)
-│   │   └── waypoint_service.dart
-│   ├── utils/
-│   │   ├── coordinate_utils.dart  # DDM / DD / DMS + Maidenhead
-│   │   ├── geo_utils.dart         # Haversine + bearing
-│   │   ├── mgrs_utils.dart
-│   │   ├── track_bearing.dart     # Smoothed track bearing estimator
-│   │   └── units.dart             # Unified colour palette + speed / distance / format preferences
-│   └── widgets/
-│       └── arrow_widget.dart
+│   │   ├── environment_service.dart # Sensor stream (proximity, env, motion)
+│   │   └── waypoint_service.dart    # MOB + nav waypoints, GPX import, undo
+│   └── utils/
+│       ├── coordinate_utils.dart    # DDM / DD / DMS + Maidenhead
+│       ├── geo_utils.dart           # Haversine + bearing
+│       ├── gpx_utils.dart           # GPX 1.1 parse + build (xml package)
+│       ├── mgrs_utils.dart
+│       ├── track_bearing.dart       # Smoothed track bearing estimator
+│       └── units.dart               # Unified kD*/kN* colour palette + prefs
 ├── android/app/src/main/
-│   ├── kotlin/…/MainActivity.kt   # Lock-screen flags, pocket lock, GNSS/sensor channels
-│   └── AndroidManifest.xml
+│   ├── kotlin/…/MainActivity.kt     # Lock-screen flags, pocket lock, file picker, sensors
+│   └── AndroidManifest.xml          # GPS permissions + GPX intent filters
 ├── assets/
-│   ├── cities.tsv            # Top-5 000 cities — committed (260 KB, CC BY 4.0)
-│   ├── cities_precise.tsv    # gitignored — create with fetch_cities.py
-│   ├── cities_detailed.tsv   # gitignored — create with fetch_cities.py
-│   ├── ports.tsv             # gitignored — create with fetch_ports.py
-│   └── icon/                 # App icon PNGs — committed
+│   ├── cities.tsv                   # Top-5 000 cities — committed (CC BY 4.0)
+│   ├── cities_precise.tsv           # gitignored — create with fetch_cities.py
+│   ├── cities_detailed.tsv          # gitignored — create with fetch_cities.py
+│   ├── ports.tsv                    # gitignored — create with fetch_ports.py
+│   └── icon/                        # App icon PNGs — committed
 └── scripts/
-    ├── create_stubs.py       # Creates placeholder assets (instant, no internet)
-    ├── fetch_cities.py       # Downloads city datasets from GeoNames
-    ├── fetch_ports.py        # Downloads port data from NGA WPI + GeoNames + OSM
-    └── generate_icon.py      # Generates app icon PNGs via Pillow
+    ├── create_stubs.py              # Placeholder assets (no internet needed)
+    ├── fetch_cities.py              # Downloads GeoNames city datasets
+    ├── fetch_ports.py               # Downloads NGA WPI + GeoNames + OSM ports
+    └── generate_icon.py             # Generates icon via Pillow
 ```
 
 ---
@@ -240,22 +257,13 @@ WPI file must be saved manually first:
 
 1. Open <https://msi.nga.mil/Publications/WPI> in a browser
 2. Under **Download Publication** click **Complete Volume** — saves `UpdatedPub150.csv`
-   (Do **not** use the PDF, MS Access, or Shapefile options — those are archived editions)
 3. Save the file anywhere on your machine
 
-For the GeoNames harbour supplement, register a free account and enable free
-web services at <https://www.geonames.org/manageaccount>.
+For the GeoNames harbour supplement, register a free account at <https://www.geonames.org/manageaccount>.
 
 **Windows:**
 ```powershell
-# Recommended: WPI + GeoNames
 python scripts\fetch_ports.py --wpi-file "C:\path\to\UpdatedPub150.csv" --user YOUR_USERNAME
-
-# WPI only (no account needed):
-python scripts\fetch_ports.py --wpi-file "C:\path\to\UpdatedPub150.csv" --no-geonames --no-osm
-
-# Add inland marinas for specific countries (OSM, no account needed):
-python scripts\fetch_ports.py --wpi-file "C:\path\to\UpdatedPub150.csv" --user YOUR_USERNAME --countries PL,DE,FI,SE,NL
 ```
 
 **Linux / macOS:**
@@ -263,18 +271,11 @@ python scripts\fetch_ports.py --wpi-file "C:\path\to\UpdatedPub150.csv" --user Y
 python3 scripts/fetch_ports.py --wpi-file "/path/to/UpdatedPub150.csv" --user YOUR_USERNAME
 ```
 
-If interrupted, re-run with the same arguments — progress is cached in
-`scripts/.ports_cache.json` and completed countries are not re-fetched.
-
-`assets/ports.tsv` columns: `name`, `country`, `lat/lon`, `type` (PRT/HBR/MRNA/LDNG/ANCH),
-`size`, `vhf`, `phone`, `call_sign`, `wpi_index`, `facilities`, plus 13 navigation detail fields.
-
 ---
 
 ### Regenerate app icon (optional)
 
-Pre-generated icons are committed to the repo. Regenerate only if you change
-`scripts/generate_icon.py`:
+Pre-generated icons are committed to the repo. Regenerate only if you change `generate_icon.py`:
 
 ```bash
 python3 scripts/generate_icon.py   # python on Windows
@@ -307,6 +308,9 @@ The app never uses a network connection.
 | `flutter_compass` | Magnetic compass heading |
 | `get_storage` | Persistent settings and waypoints (pure Dart) |
 | `url_launcher` | Open external links in the port detail sheet |
+| `share_plus` | Share GPX export via Android share sheet |
+| `path_provider` | Temporary directory for GPX file staging |
+| `xml` | GPX 1.1 XML parsing and generation |
 
 ---
 
@@ -321,18 +325,7 @@ The app never uses a network connection.
 | Source code | Yes | MIT | This project |
 | App icon | Yes | MIT | This project |
 
-\* `ports.tsv` is an **ODbL Derived Database** when generated with `--countries` (OSM inland marina
-data). Redistributing that file requires making it available under
-[ODbL 1.0](https://opendatacommons.org/licenses/odbl/1.0/). This does not affect the source code
-(MIT) or the compiled APK.
-
-Required attribution (displayed in-app via About & Legal screen):
-```
-City data: GeoNames (geonames.org), CC BY 4.0
-Port data: NGA World Port Index (public domain)
-           GeoNames (geonames.org), CC BY 4.0
-           © OpenStreetMap contributors (ODbL) — where applicable
-```
+\* `ports.tsv` is an **ODbL Derived Database** when generated with `--countries` (OSM inland marina data).
 
 Full licence text: [LICENSE](LICENSE) · Third-party notices: [NOTICES](NOTICES)
 
@@ -340,15 +333,8 @@ Full licence text: [LICENSE](LICENSE) · Third-party notices: [NOTICES](NOTICES)
 
 ## Known limitations
 
-- **Magnetic declination** uses Android's `GeomagneticField` (WMM). Accuracy degrades between
-  model update cycles (every 5 years) and at high latitudes.
-- **GPS course** is only used above 5.4 km/h. Below that, the magnetic compass is primary and
-  is susceptible to nearby metal or magnetic fields (e.g. a car-mount magnet).
-- **TRK** requires ~80 m of movement to stabilise after a direction change, and at least two GPS
-  fixes to initialise.
-- **City and port databases** are static snapshots. Port communication data (VHF channels, phone
-  numbers) comes from the NGA WPI; accuracy depends on the publication date.
-- Port VHF data is absent for many small marinas — the WPI focuses on commercial ports.
-- **Pocket lock** uses brightness + touch-blocking, not a device lock. The screen dims to black
-  and touch is disabled, but the keyguard remains in its normal state so biometric unlock works
-  immediately when the phone is taken out of the pocket.
+- **Magnetic declination** uses Android's `GeomagneticField` (WMM). Accuracy degrades between model update cycles (every 5 years) and at high latitudes.
+- **GPS course** is only used above 5.4 km/h. Below that, the magnetic compass is primary and is susceptible to nearby metal or magnetic fields (e.g. a car-mount magnet).
+- **TRK** requires ~80 m of movement to stabilise after a direction change, and at least two GPS fixes to initialise.
+- **City and port databases** are static snapshots. Port communication data (VHF channels, phone numbers) comes from the NGA WPI; accuracy depends on the publication date.
+- **Pocket lock** uses brightness + touch-blocking, not a device lock. The screen dims to black and touch is disabled, but the keyguard remains normal so biometric unlock works immediately when the phone is taken out of the pocket.

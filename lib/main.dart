@@ -145,6 +145,23 @@ class _QthHelperAppState extends State<QthHelperApp> {
           surface: Colors.black,
           surfaceTint: Colors.transparent,
         ),
+        // Ink ripple / tap highlight — default white causes a grey flash in
+        // night mode.  Use palette colours so every InkWell stays on-theme.
+        splashColor:     (_dayMode ? kDFg3 : kN2).withValues(alpha: 0.22),
+        highlightColor:  (_dayMode ? kDFg3 : kN1).withValues(alpha: 0.10),
+        // TabBar overlay specifically — overlayColor takes precedence over
+        // splashColor inside a TabBar so we set it explicitly as well.
+        tabBarTheme: TabBarThemeData(
+          overlayColor: WidgetStateProperty.resolveWith((states) {
+            if (states.contains(WidgetState.pressed)) {
+              return (_dayMode ? kDFg3 : kN2).withValues(alpha: 0.22);
+            }
+            if (states.contains(WidgetState.hovered)) {
+              return (_dayMode ? kDFg3 : kN2).withValues(alpha: 0.10);
+            }
+            return Colors.transparent;
+          }),
+        ),
         // Tooltips: mode-aware so day and night each get the correct palette.
         //   Day  — matches snackbars: dark charcoal bg (kDSnackBg) + near-white text (kDFg1)
         //   Night — no greys allowed: near-black red bg (kNBg) + primary red text (kN1)
