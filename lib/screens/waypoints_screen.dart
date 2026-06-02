@@ -1,7 +1,11 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:file_picker/file_picker.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 import 'about_screen.dart';
 import '../models/waypoint.dart';
 import '../services/waypoint_service.dart';
@@ -57,6 +61,109 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
     super.dispose();
   }
 
+  // ── Snackbar helper (mirrors _HomeScreenState style) ─────────────────────
+  void _snack(String msg, {Duration duration = const Duration(milliseconds: 2200)}) {
+    final bg = _day ? kDSnackBg : kNBg;
+    final fg = _day ? kDFg1     : kN2;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(msg, style: TextStyle(color: fg, fontSize: 13), maxLines: 3),
+      backgroundColor: bg,
+      duration: duration,
+      behavior: SnackBarBehavior.floating,
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+    ));
+  }
+
+  // ── GPX export ────────────────────────────────────────────────────────────
+  Future<void> _exportGpx() async {
+    final wpts = WaypointService.instance.waypoints;
+    if (wpts.isEmpty) { _snack('No waypoints to export.'); return; }
+
+    final sb = StringBuffer()
+      ..writeln('<?xml version="1.0" encoding="UTF-8"?>')
+      ..writeln('<gpx version="1.1" creator="QTH Dashboard"'
+          ' xmlns="http://www.topografix.com/GPX/1/1">');
+    for (final w in wpts) {
+      sb
+        ..writeln('  <wpt lat="${w.lat.toStringAsFixed(6)}"'
+            ' lon="${w.lon.toStringAsFixed(6)}">')
+        ..writeln('    <name>${_xe(w.name)}</name>')
+        ..writeln('    <time>${w.timestamp.toUtc().toIso8601String()}</time>')
+        ..writeln('  </wpt>');
+    }
+    sb.writeln('</gpx>');
+
+    final dir  = await getTemporaryDirectory();
+    final file = File('${dir.path}/qth_waypoints.gpx');
+    await file.writeAsString(sb.toString());
+    await SharePlus.instance.shareXFiles(
+      [XFile(file.path, mimeType: 'application/gpx+xml')],
+      subject: 'QTH Dashboard waypoints',
+    );
+  }
+
+  // ── GPX import ────────────────────────────────────────────────────────────
+  Future<void> _importGpx() async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.any,
+      withData: false,
+    );
+    if (result == null || result.files.isEmpty) return;
+    final path = result.files.single.path;
+    if (path == null) { _snack('Could not read selected file.'); return; }
+
+    final content = await File(path).readAsString();
+    final parsed  = _parseGpx(content);
+    if (parsed.isEmpty) {
+      _snack('No waypoints found in the selected file.');
+      return;
+    }
+    final added = WaypointService.instance.importWaypoints(parsed);
+    setState(() {});
+    final skipped = parsed.length - added;
+    _snack(skipped > 0
+        ? 'Imported $added waypoint${added == 1 ? '' : 's'}'
+          ' ($skipped already existed).'
+        : 'Imported $added waypoint${added == 1 ? '' : 's'}.');
+  }
+
+  // ── GPX helpers ───────────────────────────────────────────────────────────
+  static String _xe(String s) => s
+      .replaceAll('&', '&amp;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;')
+      .replaceAll('"', '&quot;');
+
+  static String _xu(String s) => s
+      .replaceAll('&amp;',  '&')
+      .replaceAll('&lt;',   '<')
+      .replaceAll('&gt;',   '>')
+      .replaceAll('&quot;', '"');
+
+  static List<({String name, double lat, double lon, DateTime time})>
+      _parseGpx(String content) {
+    final result = <({String name, double lat, double lon, DateTime time})>[];
+    final wptRe  = RegExp(
+        r'<wpt\s[^>]*lat="([^"]+)"[^>]*lon="([^"]+)"[^>]*>([\s\S]*?)</wpt>',
+        caseSensitive: false);
+    final nameRe = RegExp(r'<name>([\s\S]*?)</name>', caseSensitive: false);
+    final timeRe = RegExp(r'<time>([\s\S]*?)</time>', caseSensitive: false);
+
+    for (final m in wptRe.allMatches(content)) {
+      final lat = double.tryParse(m.group(1) ?? '');
+      final lon = double.tryParse(m.group(2) ?? '');
+      if (lat == null || lon == null) continue;
+      final body = m.group(3) ?? '';
+      final name = _xu(nameRe.firstMatch(body)?.group(1)?.trim() ?? 'WPT');
+      final timeStr = timeRe.firstMatch(body)?.group(1)?.trim();
+      final time    = (timeStr != null ? DateTime.tryParse(timeStr) : null)
+          ?? DateTime.now();
+      result.add((name: name, lat: lat, lon: lon, time: time));
+    }
+    return result;
+  }
+
   @override
   Widget build(BuildContext context) {
     final wpts = WaypointService.instance.waypoints;
@@ -71,8 +178,18 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
         actions: [
           IconButton(
             icon: const Icon(Icons.add_location_alt_outlined),
-            tooltip: 'Add waypoint manually',
+            tooltip: 'Add waypoint',
             onPressed: () => _showEditSheet(null),
+          ),
+          IconButton(
+            icon: Icon(Icons.upload_file_outlined, color: _cTertiary),
+            tooltip: 'Import GPX',
+            onPressed: _importGpx,
+          ),
+          IconButton(
+            icon: Icon(Icons.share_outlined, color: _cTertiary),
+            tooltip: 'Export GPX',
+            onPressed: _exportGpx,
           ),
           IconButton(
             icon: const Icon(Icons.info_outline),
@@ -95,19 +212,20 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
                 ),
               ),
             )
-          : ListView.separated(
+          : ReorderableListView.builder(
+              buildDefaultDragHandles: false,
+              onReorder: (oldIndex, newIndex) {
+                setState(() => WaypointService.instance.reorder(oldIndex, newIndex));
+              },
               itemCount: wpts.length,
-              separatorBuilder: (_, __) => Divider(
-                  color: _day ? kDDiv : kNDiv,
-                  height: 1),
-              itemBuilder: (ctx, i) => _tile(wpts[i]),
+              itemBuilder: (ctx, i) => _tile(wpts[i], index: i, key: ValueKey(wpts[i].id)),
             ),
     );
   }
 
-  Widget _tile(Waypoint wp) {
-    final isActive    = WaypointService.instance.activeId == wp.id;       // navigation
-    final isEmergency = WaypointService.instance.emergencyId == wp.id;    // MOB
+  Widget _tile(Waypoint wp, {required int index, Key? key}) {
+    final isActive    = WaypointService.instance.activeId == wp.id;
+    final isEmergency = WaypointService.instance.emergencyId == wp.id;
     final pos = widget.currentPosition;
     final dist = pos != null
         ? formatDistanceUnit(
@@ -124,11 +242,13 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
     final locColor = _locColor(widget.locatorType);
 
     final inkColor = (_day ? kDFg0 : kN2).withValues(alpha: 0.12);
-    return Theme(
-      data: Theme.of(context).copyWith(
-        splashColor: inkColor,
-        highlightColor: inkColor,
+    return DecoratedBox(
+      key: key,
+      decoration: BoxDecoration(
+        border: Border(bottom: BorderSide(color: _day ? kDDiv : kNDiv, width: 1)),
       ),
+      child: Theme(
+      data: Theme.of(context).copyWith(splashColor: inkColor, highlightColor: inkColor),
       child: ListTile(
       tileColor: (isEmergency || isActive) ? kNBg : Colors.transparent,
       leading: Icon(
@@ -192,13 +312,25 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
         ],
       ),
       isThreeLine: true,
-      trailing: dist != null
-          ? Text(dist,
-              style: TextStyle(
-                  color: _cDistText,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600))
-          : null,
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (dist != null)
+            Text(dist,
+                style: TextStyle(
+                    color: _cDistText,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600)),
+          const SizedBox(width: 6),
+          ReorderableDragStartListener(
+            index: index,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+              child: Icon(Icons.drag_handle, color: _cDim, size: 20),
+            ),
+          ),
+        ],
+      ),
       onTap: () {
         HapticFeedback.lightImpact();
         if (isActive) {
@@ -213,7 +345,8 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
         _showEditSheet(wp);
       },
     ),   // ListTile
-    );   // Theme
+    ),   // Theme
+    );   // DecoratedBox
   }
 
   void _showEditSheet(Waypoint? existing) {

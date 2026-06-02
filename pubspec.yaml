@@ -13,6 +13,9 @@ dependencies:
   flutter_compass: ^0.8.0
   get_storage: ^2.1.1   # pure Dart, no Android plugin → no KGP issues
   url_launcher: ^6.3.2  # open links in the city/port detail sheet
+  share_plus: ^10.1.3   # share GPX export via Android share sheet
+  file_picker: ^8.3.7   # pick GPX file for import
+  path_provider: ^2.1.5 # temp directory for GPX file staging
 
 dev_dependencies:
   flutter_launcher_icons: ^0.14.1

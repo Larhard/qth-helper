@@ -155,6 +155,37 @@ class WaypointService {
     }
   }
 
+  void reorder(int oldIndex, int newIndex) {
+    if (newIndex > oldIndex) newIndex--;
+    final w = _waypoints.removeAt(oldIndex);
+    _waypoints.insert(newIndex, w);
+    _persist();
+  }
+
+  /// Import a list of parsed waypoints; returns the count actually added.
+  /// Skips duplicates (same name and coordinates within ~1 m).
+  int importWaypoints(
+      List<({String name, double lat, double lon, DateTime time})> items) {
+    int count = 0;
+    for (final item in items) {
+      final exists = _waypoints.any((e) =>
+          e.name == item.name &&
+          (e.lat - item.lat).abs() < 0.00001 &&
+          (e.lon - item.lon).abs() < 0.00001);
+      if (exists) continue;
+      _waypoints.add(Waypoint(
+        id: '${DateTime.now().millisecondsSinceEpoch}_$count',
+        name: item.name,
+        lat: item.lat,
+        lon: item.lon,
+        timestamp: item.time,
+      ));
+      count++;
+    }
+    if (count > 0) _persist();
+    return count;
+  }
+
   void _persist() {
     _store.write(_listKey, _waypoints.map((w) => w.toJson()).toList());
   }

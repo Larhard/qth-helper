@@ -32,8 +32,8 @@ const kDFg4  = Color(0xFF666666); // very dim  — hints, disabled text
 const kDGps  = Color(0xFF55DD55); // GPS heading · IARU locator · UTC time
 const kDGpsL = Color(0xFF3DBF3D); // GPS / locator sub-label
 
-// TRK (smoothed track bearing) — yellow-green
-const kDTrk  = Color(0xFF88CC33);
+// TRK (smoothed track bearing) — clear golden yellow, distinct from GPS green
+const kDTrk  = Color(0xFFDDCC00);
 
 // Emergency / MOB — red family
 const kDEmg  = Color(0xFFFF3333); // MOB name, arrow, highlight

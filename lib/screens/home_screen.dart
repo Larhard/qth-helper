@@ -1019,6 +1019,29 @@ class _HomeScreenState extends State<HomeScreen>
         child: Divider(color: _cDivider, height: 1),
       );
 
+  // ── Arrow with relative-bearing ring ─────────────────────────────────────
+  // Wraps ArrowWidget with a thin ring whose dot shows WHERE the POI is
+  // relative to the current heading (12 o'clock = ahead, 3 = right, …).
+  Widget _arrowWithRelRing(double bearingDeg, Color color, double size) {
+    final relBearing = (bearingDeg - _heading + 360) % 360;
+    return SizedBox(
+      width: size, height: size,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          Positioned.fill(child: CustomPaint(
+            painter: _RelativeDotRingPainter(
+              relBearing: relBearing,
+              color: color,
+              dayMode: _dayMode,
+            ),
+          )),
+          ArrowWidget(bearingDeg: bearingDeg, color: color, size: size),
+        ],
+      ),
+    );
+  }
+
   // ── Bearing-ring markers ──────────────────────────────────────────────────
   // Returns the city and/or active-waypoint bearing as coloured dots that will
   // be drawn on the ring around the heading arrow, showing relative direction
@@ -1507,7 +1530,7 @@ class _HomeScreenState extends State<HomeScreen>
       onLongPress: () => _showCityDetails(nc),
       behavior: HitTestBehavior.opaque,
       child: Row(children: [
-        ArrowWidget(bearingDeg: nc.bearingDeg, color: color, size: 60),
+        _arrowWithRelRing(nc.bearingDeg, color, 60),
         const SizedBox(width: 16),
         Expanded(
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -1573,7 +1596,7 @@ class _HomeScreenState extends State<HomeScreen>
       onLongPress: () => _showCityDetails(nc),
       behavior: HitTestBehavior.opaque,
       child: Row(children: [
-        ArrowWidget(bearingDeg: nc.bearingDeg, color: color, size: 44),
+        _arrowWithRelRing(nc.bearingDeg, color, 44),
         const SizedBox(width: 10),
         Expanded(
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -1638,7 +1661,7 @@ class _HomeScreenState extends State<HomeScreen>
                 ? const EdgeInsets.fromLTRB(12, 8, 12, 8)
                 : const EdgeInsets.fromLTRB(10, 5, 10, 5),
             child: Row(children: [
-              ArrowWidget(bearingDeg: b, color: navColor, size: arrowSz),
+              _arrowWithRelRing(b, navColor, arrowSz),
               const SizedBox(width: 10),
               Expanded(child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -1754,10 +1777,7 @@ class _HomeScreenState extends State<HomeScreen>
               Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  ArrowWidget(
-                      bearingDeg: b,
-                      color: _cWptArrow,
-                      size: arrowSize),
+                  _arrowWithRelRing(b, _cWptArrow, arrowSize),
                   const SizedBox(width: 14),
                   Expanded(
                     child: Column(
@@ -2409,7 +2429,7 @@ class _BearingRingPainter extends CustomPainter {
   static const _ringR   = 37.5;
   static const _dotR    = 3.5;
   static const _glowR   = 6.0;
-  static const _tickLen = 5.0;
+
 
 
   @override
@@ -2420,15 +2440,14 @@ class _BearingRingPainter extends CustomPainter {
     final cy = size.height / 2;
 
     final ringBase = dayMode ? kDFg0 : kN2;
-    // Wind-rose needs to be visible in bright light → higher opacity, wider stroke.
-    final ringAlpha = windRoseMode ? (dayMode ? 0.45 : 0.55) : (dayMode ? 0.12 : 0.18);
+    // Wind-rose needs high contrast in bright sunlight.
+    final ringAlpha = windRoseMode ? (dayMode ? 0.70 : 0.78) : (dayMode ? 0.12 : 0.18);
     final ringColor = ringBase.withValues(alpha: ringAlpha);
-    final tickColor = ringBase.withValues(alpha: dayMode ? 0.30 : 0.40);
 
     // ── Ring ─────────────────────────────────────────────────────────────
     canvas.drawCircle(Offset(cx, cy), _ringR,
         Paint()..color = ringColor..style = PaintingStyle.stroke
-               ..strokeWidth = windRoseMode ? 1.5 : 1.0);
+               ..strokeWidth = windRoseMode ? 2.0 : 1.0);
 
     // ── Wind-rose mode: rotating cardinal/intercardinal tick marks ────────
     if (windRoseMode) {
@@ -2439,15 +2458,29 @@ class _BearingRingPainter extends CustomPainter {
         final isCardinal = i % 2 == 0;
 
         if (i == 0) {
-          // North: long thick red tick + "N" text inside the ring.
-          // Tick shape clearly distinguishes North from circular waypoint dots.
+          // North — most prominent marker on the ring.
+          // A thick colored arc on the ring plus an inward pointer tick.
+          // The arc (unlike a thin tick) is visible in direct sunlight.
           final nColor = dayMode ? kDEmg : kN0;
+          const arcHalfSpan = 0.32; // ~18° each side → ~36° total arc
+          canvas.drawArc(
+            Rect.fromLTWH(cx - _ringR, cy - _ringR, _ringR * 2, _ringR * 2),
+            angle - arcHalfSpan,
+            arcHalfSpan * 2,
+            false,
+            Paint()
+              ..color = nColor
+              ..strokeWidth = 5.5
+              ..style = PaintingStyle.stroke
+              ..strokeCap = StrokeCap.round,
+          );
+          // Inward pointer from the arc
           canvas.drawLine(
             Offset(cx + _ringR * _cos(angle), cy + _ringR * _sin(angle)),
-            Offset(cx + (_ringR - 14) * _cos(angle), cy + (_ringR - 14) * _sin(angle)),
+            Offset(cx + (_ringR - 13) * _cos(angle), cy + (_ringR - 13) * _sin(angle)),
             Paint()..color = nColor..strokeWidth = 3.0..strokeCap = StrokeCap.round,
           );
-          // "N" inside the ring just past the tick tip
+          // "N" label at tip of pointer
           final lx = cx + (_ringR - 22) * _cos(angle);
           final ly = cy + (_ringR - 22) * _sin(angle);
           final nPainter = TextPainter(
@@ -2459,9 +2492,10 @@ class _BearingRingPainter extends CustomPainter {
           nPainter.paint(canvas,
               Offset(lx - nPainter.width / 2, ly - nPainter.height / 2));
         } else {
-          final tLen  = isCardinal ? 8.0 : 5.0;
-          final tW    = isCardinal ? 2.2 : 1.2;
-          final alpha = isCardinal ? (dayMode ? 0.65 : 0.75) : (dayMode ? 0.35 : 0.45);
+          // Other cardinals/intercardinals — larger and brighter than before.
+          final tLen  = isCardinal ? 9.0 : 7.0;
+          final tW    = isCardinal ? 2.8 : 1.6;
+          final alpha = isCardinal ? (dayMode ? 0.80 : 0.88) : (dayMode ? 0.55 : 0.65);
           canvas.drawLine(
             Offset(cx + _ringR * _cos(angle), cy + _ringR * _sin(angle)),
             Offset(cx + (_ringR - tLen) * _cos(angle), cy + (_ringR - tLen) * _sin(angle)),
@@ -2493,15 +2527,8 @@ class _BearingRingPainter extends CustomPainter {
             ..strokeCap = StrokeCap.round,
         );
       }
-    } else {
-      // Arrow mode: single "ahead" tick at 12 o'clock
-      const aheadAngle = -_halfPi;
-      canvas.drawLine(
-        Offset(cx + _ringR * _cos(aheadAngle), cy + _ringR * _sin(aheadAngle)),
-        Offset(cx + (_ringR - _tickLen) * _cos(aheadAngle), cy + (_ringR - _tickLen) * _sin(aheadAngle)),
-        Paint()..color = tickColor..strokeWidth = 1.5..strokeCap = StrokeCap.round,
-      );
     }
+    // Arrow mode: no reference tick — the ring itself is the reference, dots are absolute.
 
     // ── Heading cursor — fixed triangle at 12 o'clock (wind-rose only) ───
     // Always points toward the top of the ring = the direction the user is heading.
@@ -2520,9 +2547,13 @@ class _BearingRingPainter extends CustomPainter {
       canvas.drawPath(hPath, Paint()..color = hColor..style = PaintingStyle.fill);
     }
 
-    // ── POI dots (same in both modes) ─────────────────────────────────────
+    // ── POI dots ─────────────────────────────────────────────────────────
+    // Wind-rose: relative to heading (heading = 12 o'clock).
+    // Arrow mode: absolute (North = 12 o'clock) — consistent with the absolute arrow.
     for (final m in markers) {
-      final rel   = (m.bearingDeg - primaryHeading + 360) % 360;
+      final rel   = windRoseMode
+          ? (m.bearingDeg - primaryHeading + 360) % 360
+          : m.bearingDeg;
       final angle = rel * _piOver180 - _halfPi;
       final dx    = cx + _ringR * _cos(angle);
       final dy    = cy + _ringR * _sin(angle);
@@ -2549,11 +2580,86 @@ class _BearingRingPainter extends CustomPainter {
   static double _sin(double a) => math.sin(a);
 
   @override
-  bool shouldRepaint(_BearingRingPainter old) =>
-      old.primaryHeading != primaryHeading ||
-      old.dayMode != dayMode ||
-      old.windRoseMode != windRoseMode ||
-      old.markers.length != markers.length ||
-      old.secondaryBearing != secondaryBearing ||
-      old.secondaryColor != secondaryColor;
+  bool shouldRepaint(_BearingRingPainter old) {
+    if (old.primaryHeading != primaryHeading) return true;
+    if (old.dayMode != dayMode) return true;
+    if (old.windRoseMode != windRoseMode) return true;
+    if (old.secondaryBearing != secondaryBearing) return true;
+    if (old.secondaryColor != secondaryColor) return true;
+    if (old.markers.length != markers.length) return true;
+    // Check per-marker bearing and color — bearing changes when user moves.
+    for (int i = 0; i < markers.length; i++) {
+      if (old.markers[i].bearingDeg != markers[i].bearingDeg) return true;
+      if (old.markers[i].color != markers[i].color) return true;
+    }
+    return false;
+  }
+}
+
+// ── Relative bearing dot ring ─────────────────────────────────────────────────
+//
+// Drawn around an ArrowWidget in the city / waypoint / MOB cards.
+// The arrow shows the ABSOLUTE bearing to the POI; this ring shows the bearing
+// RELATIVE to the current heading — at a glance you can see whether the POI is
+// ahead (12 o'clock), to the right (3 o'clock), behind (6 o'clock), etc.
+//
+// The ring shares the same size as the ArrowWidget it wraps; no extra space needed.
+
+class _RelativeDotRingPainter extends CustomPainter {
+  final double relBearing; // 0 = ahead, 90 = right, 180 = behind, 270 = left
+  final Color color;
+  final bool dayMode;
+
+  const _RelativeDotRingPainter({
+    required this.relBearing,
+    required this.color,
+    required this.dayMode,
+  });
+
+  static const _halfPi    = 1.5707963267948966;
+  static const _piOver180 = 0.017453292519943295;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final cx = size.width  / 2;
+    final cy = size.height / 2;
+    final r  = size.width  / 2 - 3.0; // ring just inside widget bounds
+
+    // Thin reference ring
+    canvas.drawCircle(Offset(cx, cy), r,
+        Paint()
+          ..color = color.withValues(alpha: dayMode ? 0.18 : 0.22)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.0);
+
+    // Four small ticks at ahead / right / behind / left
+    for (int q = 0; q < 4; q++) {
+      final a = q * math.pi / 2 - _halfPi;
+      canvas.drawLine(
+        Offset(cx + r * math.cos(a), cy + r * math.sin(a)),
+        Offset(cx + (r - 3.5) * math.cos(a), cy + (r - 3.5) * math.sin(a)),
+        Paint()
+          ..color = color.withValues(alpha: dayMode ? 0.28 : 0.33)
+          ..strokeWidth = 1.0
+          ..strokeCap = StrokeCap.round,
+      );
+    }
+
+    // Relative-bearing dot
+    final angle = relBearing * _piOver180 - _halfPi;
+    final dx = cx + r * math.cos(angle);
+    final dy = cy + r * math.sin(angle);
+    // Glow
+    canvas.drawCircle(Offset(dx, dy), 5.0,
+        Paint()..color = color.withValues(alpha: 0.28)..style = PaintingStyle.fill);
+    // Dot
+    canvas.drawCircle(Offset(dx, dy), 3.5,
+        Paint()..color = color..style = PaintingStyle.fill);
+  }
+
+  @override
+  bool shouldRepaint(_RelativeDotRingPainter old) =>
+      old.relBearing != relBearing ||
+      old.color      != color      ||
+      old.dayMode    != dayMode;
 }
