@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart' show LicenseEntryWithLineBreaks, LicenseRegistry;
 import 'package:flutter/material.dart';
+import 'utils/units.dart';
 import 'package:flutter/services.dart' show SystemChrome, SystemUiMode;
 import 'package:get_storage/get_storage.dart';
 import 'screens/home_screen.dart';
@@ -119,6 +120,22 @@ class QthHelperApp extends StatelessWidget {
         colorScheme: const ColorScheme.dark(
           surface: Colors.black,
           surfaceTint: Colors.transparent,
+        ),
+        // Tooltips: M3 inverseSurface defaults to near-white — wrong for night mode.
+        // Use kNBg (near-black, dark-red family) + kN1 (medium red) so no grey
+        // ever appears in night mode.  In day mode the near-black bg + red text
+        // looks dark but remains readable and is consistent with the red palette.
+        tooltipTheme: TooltipThemeData(
+          decoration: BoxDecoration(
+            color: kNBg,  // 0xFF1A0000 — near-black from the night palette
+            borderRadius: BorderRadius.circular(4),
+          ),
+          textStyle: const TextStyle(
+            color: kN1,   // 0xFFCC1111 — primary red
+            fontSize: 12,
+            fontWeight: FontWeight.w500,
+          ),
+          waitDuration: const Duration(milliseconds: 600),
         ),
       ),
       home: const HomeScreen(),

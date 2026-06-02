@@ -2507,8 +2507,8 @@ class _BearingRingPainter extends CustomPainter {
     final cy = size.height / 2;
 
     final ringBase = dayMode ? kDFg0 : kN2;
-    // Wind-rose needs high contrast in bright sunlight.
-    final ringAlpha = windRoseMode ? (dayMode ? 0.70 : 0.78) : (dayMode ? 0.12 : 0.18);
+    // Wind-rose: high contrast in bright sunlight; arrow mode: matches city-card ring style.
+    final ringAlpha = windRoseMode ? (dayMode ? 0.70 : 0.78) : (dayMode ? 0.20 : 0.28);
     final ringColor = ringBase.withValues(alpha: ringAlpha);
 
     // ── Ring ─────────────────────────────────────────────────────────────
@@ -2594,8 +2594,21 @@ class _BearingRingPainter extends CustomPainter {
             ..strokeCap = StrokeCap.round,
         );
       }
+    } else {
+      // Arrow mode: 4-tick crosshair at N / E / S / W (absolute, matching the
+      // city/waypoint/MOB rings so the heading ring looks visually consistent).
+      for (int q = 0; q < 4; q++) {
+        final a = q * math.pi / 2 - _halfPi; // 12, 3, 6, 9 o'clock
+        canvas.drawLine(
+          Offset(cx + _ringR * _cos(a), cy + _ringR * _sin(a)),
+          Offset(cx + (_ringR - 4.5) * _cos(a), cy + (_ringR - 4.5) * _sin(a)),
+          Paint()
+            ..color = ringBase.withValues(alpha: dayMode ? 0.32 : 0.42)
+            ..strokeWidth = 1.0
+            ..strokeCap = StrokeCap.round,
+        );
+      }
     }
-    // Arrow mode: no reference tick — the ring itself is the reference, dots are absolute.
 
     // ── Heading cursor — fixed triangle at 12 o'clock (wind-rose only) ───
     // Always points toward the top of the ring = the direction the user is heading.

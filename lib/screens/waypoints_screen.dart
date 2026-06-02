@@ -39,7 +39,8 @@ class WaypointsScreen extends StatefulWidget {
 class _WaypointsScreenState extends State<WaypointsScreen> {
   Timer? _ticker;
   final Set<String> _selected = {};
-  bool get _inSelectMode => _selected.isNotEmpty;
+  bool _selectModeActive = false;
+  bool get _inSelectMode => _selectModeActive;
 
   bool get _day => widget.dayMode;
   Color get _cPrimary  => _day ? kDFg0 : kN1;
@@ -84,7 +85,7 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
     for (final id in List.of(_selected)) {
       WaypointService.instance.remove(id);
     }
-    setState(() => _selected.clear());
+    setState(() { _selected.clear(); _selectModeActive = false; });
     _snack('Deleted $count waypoint${count == 1 ? '' : 's'}.');
   }
 
@@ -178,7 +179,10 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
     return PopScope(
       canPop: !_inSelectMode,
       onPopInvokedWithResult: (didPop, _) {
-        if (!didPop && _inSelectMode) setState(() => _selected.clear());
+        if (!didPop && _inSelectMode) setState(() {
+          _selected.clear();
+          _selectModeActive = false;
+        });
       },
       child: Scaffold(
       backgroundColor: Colors.black,
@@ -251,9 +255,7 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
       IconButton(
         icon: Icon(Icons.checklist_outlined, color: _cTertiary),
         tooltip: 'Select waypoints',
-        onPressed: () => setState(() => _selected.clear()),
-        // Tapping shows the select-mode AppBar even with 0 selected
-        // so user can see the UI before selecting.
+        onPressed: () => setState(() => _selectModeActive = true),
       ),
       IconButton(
         icon: const Icon(Icons.info_outline),
@@ -271,8 +273,11 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
     elevation: 0,
     leading: IconButton(
       icon: Icon(Icons.close, color: _cTertiary),
-      tooltip: 'Clear selection',
-      onPressed: () => setState(() => _selected.clear()),
+      tooltip: 'Exit selection mode',
+      onPressed: () => setState(() {
+        _selected.clear();
+        _selectModeActive = false;
+      }),
     ),
     title: Text(
       _selected.isEmpty ? 'Select waypoints' : '${_selected.length} selected',
