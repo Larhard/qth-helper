@@ -93,8 +93,34 @@ Attribution guidelines: https://www.openstreetmap.org/copyright
   });
 }
 
-class QthHelperApp extends StatelessWidget {
+// QthHelperApp is stateful so the Material theme can react to day/night toggles
+// and give tooltips (and any future theme-level overrides) the correct palette.
+class QthHelperApp extends StatefulWidget {
   const QthHelperApp({super.key});
+
+  @override
+  State<QthHelperApp> createState() => _QthHelperAppState();
+}
+
+class _QthHelperAppState extends State<QthHelperApp> {
+  bool _dayMode = GetStorage().read<bool>('day_mode') ?? true;
+  VoidCallback? _modeListener;
+
+  @override
+  void initState() {
+    super.initState();
+    // Rebuild the theme whenever the user toggles day / night mode.
+    _modeListener = GetStorage().listenKey(
+      'day_mode',
+      (value) => setState(() => _dayMode = value as bool? ?? true),
+    );
+  }
+
+  @override
+  void dispose() {
+    _modeListener?.call(); // cancels the GetStorage listener
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -103,9 +129,7 @@ class QthHelperApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       theme: ThemeData.dark().copyWith(
         scaffoldBackgroundColor: Colors.black,
-        // Disable Material 3's scroll-under surface tint — it turns AppBars and
-        // bottom sheets grey when content scrolls beneath them, which clashes
-        // with the app's custom day/night colour system.
+        // Disable M3 scroll-under surface tint (turns AppBars grey on scroll).
         appBarTheme: const AppBarTheme(
           backgroundColor: Colors.black,
           scrolledUnderElevation: 0,
@@ -121,19 +145,18 @@ class QthHelperApp extends StatelessWidget {
           surface: Colors.black,
           surfaceTint: Colors.transparent,
         ),
-        // Tooltips: M3 inverseSurface defaults to near-white — wrong for night mode.
-        // Use kNBg (near-black, dark-red family) + kN1 (medium red) so no grey
-        // ever appears in night mode.  In day mode the near-black bg + red text
-        // looks dark but remains readable and is consistent with the red palette.
+        // Tooltips: mode-aware so day and night each get the correct palette.
+        //   Day  — matches snackbars: dark charcoal bg (kDSnackBg) + near-white text (kDFg1)
+        //   Night — no greys allowed: near-black red bg (kNBg) + primary red text (kN1)
         tooltipTheme: TooltipThemeData(
           decoration: BoxDecoration(
-            color: kNBg,  // 0xFF1A0000 — near-black from the night palette
+            color: _dayMode ? kDSnackBg : kNBg,
             borderRadius: BorderRadius.circular(4),
           ),
-          textStyle: const TextStyle(
-            color: kN1,   // 0xFFCC1111 — primary red
+          textStyle: TextStyle(
+            color: _dayMode ? kDFg1 : kN1,
             fontSize: 12,
-            fontWeight: FontWeight.w500,
+            fontWeight: FontWeight.w400,
           ),
           waitDuration: const Duration(milliseconds: 600),
         ),
