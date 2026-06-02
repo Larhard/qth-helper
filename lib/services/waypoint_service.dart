@@ -155,8 +155,8 @@ class WaypointService {
     }
   }
 
+  // Called by ReorderableListView.onReorderItem — index is already adjusted.
   void reorder(int oldIndex, int newIndex) {
-    if (newIndex > oldIndex) newIndex--;
     final w = _waypoints.removeAt(oldIndex);
     _waypoints.insert(newIndex, w);
     _persist();

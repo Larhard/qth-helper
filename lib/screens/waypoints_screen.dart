@@ -3,9 +3,9 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:file_picker/file_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:xml/xml.dart';
 import 'about_screen.dart';
 import '../models/waypoint.dart';
 import '../services/waypoint_service.dart';
@@ -80,41 +80,56 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
     final wpts = WaypointService.instance.waypoints;
     if (wpts.isEmpty) { _snack('No waypoints to export.'); return; }
 
-    final sb = StringBuffer()
-      ..writeln('<?xml version="1.0" encoding="UTF-8"?>')
-      ..writeln('<gpx version="1.1" creator="QTH Dashboard"'
-          ' xmlns="http://www.topografix.com/GPX/1/1">');
-    for (final w in wpts) {
-      sb
-        ..writeln('  <wpt lat="${w.lat.toStringAsFixed(6)}"'
-            ' lon="${w.lon.toStringAsFixed(6)}">')
-        ..writeln('    <name>${_xe(w.name)}</name>')
-        ..writeln('    <time>${w.timestamp.toUtc().toIso8601String()}</time>')
-        ..writeln('  </wpt>');
-    }
-    sb.writeln('</gpx>');
+    // Build valid GPX 1.1 using the xml library — special characters in names
+    // are handled automatically (no manual escaping needed).
+    final builder = XmlBuilder();
+    builder.processing('xml', 'version="1.0" encoding="UTF-8"');
+    builder.element('gpx', attributes: {
+      'version': '1.1',
+      'creator': 'QTH Dashboard',
+      'xmlns': 'http://www.topografix.com/GPX/1/1',
+    }, nest: () {
+      for (final w in wpts) {
+        builder.element('wpt', attributes: {
+          'lat': w.lat.toStringAsFixed(6),
+          'lon': w.lon.toStringAsFixed(6),
+        }, nest: () {
+          builder.element('name', nest: () => builder.text(w.name));
+          builder.element('time',
+              nest: () => builder.text(w.timestamp.toUtc().toIso8601String()));
+        });
+      }
+    });
 
+    final gpxString = builder.buildDocument().toXmlString(pretty: true, indent: '  ');
     final dir  = await getTemporaryDirectory();
     final file = File('${dir.path}/qth_waypoints.gpx');
-    await file.writeAsString(sb.toString());
-    await SharePlus.instance.shareXFiles(
+    await file.writeAsString(gpxString);
+    await Share.shareXFiles(
       [XFile(file.path, mimeType: 'application/gpx+xml')],
       subject: 'QTH Dashboard waypoints',
     );
   }
 
+  static const _filePickerChannel = MethodChannel('qth_helper/file_picker');
+
   // ── GPX import ────────────────────────────────────────────────────────────
   Future<void> _importGpx() async {
-    final result = await FilePicker.platform.pickFiles(
-      type: FileType.any,
-      withData: false,
-    );
-    if (result == null || result.files.isEmpty) return;
-    final path = result.files.single.path;
-    if (path == null) { _snack('Could not read selected file.'); return; }
-
-    final content = await File(path).readAsString();
-    final parsed  = _parseGpx(content);
+    final String? content;
+    try {
+      content = await _filePickerChannel.invokeMethod<String>('pickTextFile');
+    } on PlatformException catch (e) {
+      _snack('Could not read file: ${e.message}');
+      return;
+    }
+    if (content == null) return; // user cancelled
+    final List<({String name, double lat, double lon, DateTime time})> parsed;
+    try {
+      parsed = _parseGpx(content);
+    } catch (_) {
+      _snack('The selected file is not a valid GPX file.');
+      return;
+    }
     if (parsed.isEmpty) {
       _snack('No waypoints found in the selected file.');
       return;
@@ -128,37 +143,26 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
         : 'Imported $added waypoint${added == 1 ? '' : 's'}.');
   }
 
-  // ── GPX helpers ───────────────────────────────────────────────────────────
-  static String _xe(String s) => s
-      .replaceAll('&', '&amp;')
-      .replaceAll('<', '&lt;')
-      .replaceAll('>', '&gt;')
-      .replaceAll('"', '&quot;');
-
-  static String _xu(String s) => s
-      .replaceAll('&amp;',  '&')
-      .replaceAll('&lt;',   '<')
-      .replaceAll('&gt;',   '>')
-      .replaceAll('&quot;', '"');
-
+  // ── GPX parser ────────────────────────────────────────────────────────────
+  // Uses the xml package for robust parsing: handles namespaces, CDATA,
+  // XML comments, and arbitrary waypoint names with special characters.
   static List<({String name, double lat, double lon, DateTime time})>
       _parseGpx(String content) {
-    final result = <({String name, double lat, double lon, DateTime time})>[];
-    final wptRe  = RegExp(
-        r'<wpt\s[^>]*lat="([^"]+)"[^>]*lon="([^"]+)"[^>]*>([\s\S]*?)</wpt>',
-        caseSensitive: false);
-    final nameRe = RegExp(r'<name>([\s\S]*?)</name>', caseSensitive: false);
-    final timeRe = RegExp(r'<time>([\s\S]*?)</time>', caseSensitive: false);
+    final document = XmlDocument.parse(content); // throws XmlParserException on bad XML
+    final result   = <({String name, double lat, double lon, DateTime time})>[];
 
-    for (final m in wptRe.allMatches(content)) {
-      final lat = double.tryParse(m.group(1) ?? '');
-      final lon = double.tryParse(m.group(2) ?? '');
+    // findAllElements searches recursively regardless of namespace prefix.
+    for (final wpt in document.findAllElements('wpt')) {
+      final lat = double.tryParse(wpt.getAttribute('lat') ?? '');
+      final lon = double.tryParse(wpt.getAttribute('lon') ?? '');
       if (lat == null || lon == null) continue;
-      final body = m.group(3) ?? '';
-      final name = _xu(nameRe.firstMatch(body)?.group(1)?.trim() ?? 'WPT');
-      final timeStr = timeRe.firstMatch(body)?.group(1)?.trim();
+
+      // innerText handles entity references (&amp; &lt; …) and CDATA automatically.
+      final name    = wpt.getElement('name')?.innerText.trim() ?? 'WPT';
+      final timeStr = wpt.getElement('time')?.innerText.trim();
       final time    = (timeStr != null ? DateTime.tryParse(timeStr) : null)
           ?? DateTime.now();
+
       result.add((name: name, lat: lat, lon: lon, time: time));
     }
     return result;
@@ -214,7 +218,7 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
             )
           : ReorderableListView.builder(
               buildDefaultDragHandles: false,
-              onReorder: (oldIndex, newIndex) {
+              onReorderItem: (oldIndex, newIndex) {
                 setState(() => WaypointService.instance.reorder(oldIndex, newIndex));
               },
               itemCount: wpts.length,

@@ -1,6 +1,7 @@
 package com.elgassia.qthdashboard
 
 import android.annotation.SuppressLint
+import android.app.Activity
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -24,6 +25,30 @@ import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity(), SensorEventListener {
+
+    // ── GPX file picker ───────────────────────────────────────────────────────
+    // Uses Android's ACTION_OPEN_DOCUMENT intent so no READ_EXTERNAL_STORAGE
+    // permission is needed on Android 10+.  The selected file's content is read
+    // via ContentResolver and returned as a UTF-8 string to Dart.
+    private var filePickerResult: MethodChannel.Result? = null
+
+    @Deprecated("Still required for FlutterActivity compatibility")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != REQUEST_PICK_FILE) return
+        val pending = filePickerResult ?: return
+        filePickerResult = null
+        if (resultCode == Activity.RESULT_OK && data?.data != null) {
+            try {
+                val bytes = contentResolver.openInputStream(data.data!!)?.use { it.readBytes() }
+                pending.success(bytes?.toString(Charsets.UTF_8))
+            } catch (e: Exception) {
+                pending.error("READ_ERROR", e.message, null)
+            }
+        } else {
+            pending.success(null) // user cancelled
+        }
+    }
 
     // ── Pocket-lock / proximity detection ─────────────────────────────────────
     //
@@ -205,6 +230,34 @@ class MainActivity : FlutterActivity(), SensorEventListener {
         // ── Environmental / motion sensors (debug screen only) ───────────────
         EventChannel(flutterEngine.dartExecutor.binaryMessenger, "qth_helper/environment")
             .setStreamHandler(SensorStreamHandler(this))
+
+        // ── GPX file picker ───────────────────────────────────────────────────
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "qth_helper/file_picker")
+            .setMethodCallHandler { call, result ->
+                if (call.method == "pickTextFile") {
+                    filePickerResult = result
+                    @Suppress("DEPRECATION")
+                    startActivityForResult(
+                        Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                            addCategory(Intent.CATEGORY_OPENABLE)
+                            type = "*/*"
+                            putExtra(Intent.EXTRA_MIME_TYPES, arrayOf(
+                                "application/gpx+xml",
+                                "application/xml",
+                                "text/xml",
+                                "text/plain",
+                            ))
+                        },
+                        REQUEST_PICK_FILE
+                    )
+                } else {
+                    result.notImplemented()
+                }
+            }
+    }
+
+    companion object {
+        private const val REQUEST_PICK_FILE = 1001
     }
 }
 
