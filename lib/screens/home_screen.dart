@@ -16,6 +16,7 @@ import '../utils/coordinate_utils.dart';
 import '../utils/geo_utils.dart';
 import '../utils/mgrs_utils.dart';
 import '../utils/units.dart';
+import '../utils/gpx_utils.dart';
 import '../widgets/arrow_widget.dart';
 import 'debug_screen.dart';
 import 'waypoints_screen.dart';
@@ -255,6 +256,8 @@ class _HomeScreenState extends State<HomeScreen>
     _gpsOnLock = GetStorage().read<bool>('gps_on_lock') ?? false;
     _staleTimer = Timer.periodic(const Duration(seconds: 1), _onStaleTick);
     _init();
+    // Check for a GPX file that was opened to launch the app (cold start).
+    WidgetsBinding.instance.addPostFrameCallback((_) => _checkPendingGpx());
   }
 
   @override
@@ -293,13 +296,11 @@ class _HomeScreenState extends State<HomeScreen>
     } else if (state == AppLifecycleState.resumed) {
       _screenOn = true;
       _compassSub?.resume();
-      // Check if Device Admin was granted while the user was in the Settings screen.
       _checkPocketLockOnResume();
       _staleTimer ??= Timer.periodic(const Duration(seconds: 1), _onStaleTick);
-      // Always restart the normal (no notification) stream on resume, whether
-      // coming from SAVE (null sub) or LIVE (background foreground-service sub).
       _startPositionStream();
       _requestImmediateGpsFix();
+      _checkPendingGpx(); // handle files opened from other apps
     }
   }
 
@@ -727,6 +728,45 @@ class _HomeScreenState extends State<HomeScreen>
     Clipboard.setData(ClipboardData(text: text));
     HapticFeedback.lightImpact();
     _showSnack(text, duration: const Duration(milliseconds: 1200));
+  }
+
+  // ── Pending GPX from ACTION_VIEW intent ──────────────────────────────────
+  // Called on cold start (initState) and on resume so files opened from
+  // file managers or email attachments are imported automatically.
+  static const _gpxChannel = MethodChannel('qth_helper/file_picker');
+
+  Future<void> _checkPendingGpx() async {
+    if (!mounted) return;
+    final String? content;
+    try {
+      content = await _gpxChannel.invokeMethod<String>('getPendingGpx');
+    } catch (_) { return; }
+    if (content == null || !mounted) return;
+
+    List<GpxWaypoint> parsed;
+    try {
+      parsed = GpxUtils.parse(content);
+    } catch (_) {
+      _showSnack('Received file is not valid GPX.');
+      return;
+    }
+    if (parsed.isEmpty) {
+      _showSnack('GPX file contained no waypoints (track points are not imported).');
+      return;
+    }
+    final r = WaypointService.instance.importWaypoints(parsed);
+    if (mounted) setState(() {});
+    _showSnack(_gpxImportSummary(r, parsed.length));
+  }
+
+  static String _gpxImportSummary(
+      ({int added, int skipped, int renamed}) r, int total) {
+    final parts = <String>[];
+    if (r.added   > 0) parts.add('${r.added} added');
+    if (r.renamed > 0) parts.add('${r.renamed} renamed');
+    if (r.skipped > 0) parts.add('${r.skipped} already existed');
+    if (parts.isEmpty) return 'GPX: all waypoints already existed.';
+    return 'GPX import: ${parts.join(', ')}.';
   }
 
   Future<void> _openWaypoints() async {

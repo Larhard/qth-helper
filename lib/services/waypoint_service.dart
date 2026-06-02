@@ -1,5 +1,6 @@
 import 'package:get_storage/get_storage.dart';
 import '../models/waypoint.dart';
+import '../utils/gpx_utils.dart';
 
 /// Two independent tracking concepts:
 ///
@@ -162,28 +163,51 @@ class WaypointService {
     _persist();
   }
 
-  /// Import a list of parsed waypoints; returns the count actually added.
-  /// Skips duplicates (same name and coordinates within ~1 m).
-  int importWaypoints(
-      List<({String name, double lat, double lon, DateTime time})> items) {
-    int count = 0;
+  /// Import parsed GPX waypoints.
+  ///
+  /// Rules:
+  ///   - Exact duplicate (same name AND position within ~10 m): silently skipped.
+  ///   - Name conflict (same name, different position): new point is renamed
+  ///     "Name (2)", "Name (3)", … so the existing waypoint is never touched.
+  ///   - Position conflict (same position, different name): imported as-is
+  ///     (intentionally different name is preserved).
+  ///   - New point: imported with original name.
+  ///
+  /// Returns a record with `added`, `skipped` (exact duplicates), and
+  /// `renamed` (name-conflict renames) counts.
+  ({int added, int skipped, int renamed}) importWaypoints(List<GpxWaypoint> items) {
+    int added = 0, skipped = 0, renamed = 0;
+    final baseMs = DateTime.now().millisecondsSinceEpoch;
+
     for (final item in items) {
-      final exists = _waypoints.any((e) =>
+      // Exact duplicate: same name AND within ~10 m → skip silently.
+      const tol = 0.0001; // ~10 m in degrees
+      final exactDup = _waypoints.any((e) =>
           e.name == item.name &&
-          (e.lat - item.lat).abs() < 0.00001 &&
-          (e.lon - item.lon).abs() < 0.00001);
-      if (exists) continue;
+          (e.lat - item.lat).abs() < tol &&
+          (e.lon - item.lon).abs() < tol);
+      if (exactDup) { skipped++; continue; }
+
+      // Name conflict: same name but different location → auto-rename new point.
+      String name = item.name;
+      if (_waypoints.any((e) => e.name == name)) {
+        int n = 2;
+        while (_waypoints.any((e) => e.name == '$name ($n)')) n++;
+        name = '$name ($n)';
+        renamed++;
+      }
+
       _waypoints.add(Waypoint(
-        id: '${DateTime.now().millisecondsSinceEpoch}_$count',
-        name: item.name,
+        id: '${baseMs + added}',
+        name: name,
         lat: item.lat,
         lon: item.lon,
         timestamp: item.time,
       ));
-      count++;
+      added++;
     }
-    if (count > 0) _persist();
-    return count;
+    if (added > 0) _persist();
+    return (added: added, skipped: skipped, renamed: renamed);
   }
 
   void _persist() {

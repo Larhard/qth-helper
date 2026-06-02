@@ -5,7 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
-import 'package:xml/xml.dart';
+import '../utils/gpx_utils.dart';
 import 'about_screen.dart';
 import '../models/waypoint.dart';
 import '../services/waypoint_service.dart';
@@ -80,31 +80,9 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
     final wpts = WaypointService.instance.waypoints;
     if (wpts.isEmpty) { _snack('No waypoints to export.'); return; }
 
-    // Build valid GPX 1.1 using the xml library — special characters in names
-    // are handled automatically (no manual escaping needed).
-    final builder = XmlBuilder();
-    builder.processing('xml', 'version="1.0" encoding="UTF-8"');
-    builder.element('gpx', attributes: {
-      'version': '1.1',
-      'creator': 'QTH Dashboard',
-      'xmlns': 'http://www.topografix.com/GPX/1/1',
-    }, nest: () {
-      for (final w in wpts) {
-        builder.element('wpt', attributes: {
-          'lat': w.lat.toStringAsFixed(6),
-          'lon': w.lon.toStringAsFixed(6),
-        }, nest: () {
-          builder.element('name', nest: () => builder.text(w.name));
-          builder.element('time',
-              nest: () => builder.text(w.timestamp.toUtc().toIso8601String()));
-        });
-      }
-    });
-
-    final gpxString = builder.buildDocument().toXmlString(pretty: true, indent: '  ');
     final dir  = await getTemporaryDirectory();
     final file = File('${dir.path}/qth_waypoints.gpx');
-    await file.writeAsString(gpxString);
+    await file.writeAsString(GpxUtils.build(wpts.toList()));
     await Share.shareXFiles(
       [XFile(file.path, mimeType: 'application/gpx+xml')],
       subject: 'QTH Dashboard waypoints',
@@ -113,7 +91,7 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
 
   static const _filePickerChannel = MethodChannel('qth_helper/file_picker');
 
-  // ── GPX import ────────────────────────────────────────────────────────────
+  // ── GPX import (from in-app file picker) ─────────────────────────────────
   Future<void> _importGpx() async {
     final String? content;
     try {
@@ -123,49 +101,35 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
       return;
     }
     if (content == null) return; // user cancelled
-    final List<({String name, double lat, double lon, DateTime time})> parsed;
+    await _doImport(content);
+  }
+
+  // ── Shared import logic ───────────────────────────────────────────────────
+  Future<void> _doImport(String content) async {
+    List<GpxWaypoint> parsed;
     try {
-      parsed = _parseGpx(content);
+      parsed = GpxUtils.parse(content);
     } catch (_) {
-      _snack('The selected file is not a valid GPX file.');
+      _snack('The file is not valid GPX — could not import.');
       return;
     }
     if (parsed.isEmpty) {
-      _snack('No waypoints found in the selected file.');
+      _snack('No waypoints found. Track points and route points are not imported.');
       return;
     }
-    final added = WaypointService.instance.importWaypoints(parsed);
+    final r = WaypointService.instance.importWaypoints(parsed);
     setState(() {});
-    final skipped = parsed.length - added;
-    _snack(skipped > 0
-        ? 'Imported $added waypoint${added == 1 ? '' : 's'}'
-          ' ($skipped already existed).'
-        : 'Imported $added waypoint${added == 1 ? '' : 's'}.');
+    _snack(_importSummary(r, parsed.length));
   }
 
-  // ── GPX parser ────────────────────────────────────────────────────────────
-  // Uses the xml package for robust parsing: handles namespaces, CDATA,
-  // XML comments, and arbitrary waypoint names with special characters.
-  static List<({String name, double lat, double lon, DateTime time})>
-      _parseGpx(String content) {
-    final document = XmlDocument.parse(content); // throws XmlParserException on bad XML
-    final result   = <({String name, double lat, double lon, DateTime time})>[];
-
-    // findAllElements searches recursively regardless of namespace prefix.
-    for (final wpt in document.findAllElements('wpt')) {
-      final lat = double.tryParse(wpt.getAttribute('lat') ?? '');
-      final lon = double.tryParse(wpt.getAttribute('lon') ?? '');
-      if (lat == null || lon == null) continue;
-
-      // innerText handles entity references (&amp; &lt; …) and CDATA automatically.
-      final name    = wpt.getElement('name')?.innerText.trim() ?? 'WPT';
-      final timeStr = wpt.getElement('time')?.innerText.trim();
-      final time    = (timeStr != null ? DateTime.tryParse(timeStr) : null)
-          ?? DateTime.now();
-
-      result.add((name: name, lat: lat, lon: lon, time: time));
-    }
-    return result;
+  static String _importSummary(
+      ({int added, int skipped, int renamed}) r, int total) {
+    final parts = <String>[];
+    if (r.added   > 0) parts.add('${r.added} added');
+    if (r.renamed > 0) parts.add('${r.renamed} renamed (name conflict)');
+    if (r.skipped > 0) parts.add('${r.skipped} already existed');
+    if (parts.isEmpty) return 'No new waypoints — all already existed.';
+    return 'Imported: ${parts.join(', ')}.';
   }
 
   @override
@@ -186,12 +150,12 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
             onPressed: () => _showEditSheet(null),
           ),
           IconButton(
-            icon: Icon(Icons.upload_file_outlined, color: _cTertiary),
+            icon: Icon(Icons.file_download_outlined, color: _cTertiary),
             tooltip: 'Import GPX',
             onPressed: _importGpx,
           ),
           IconButton(
-            icon: Icon(Icons.share_outlined, color: _cTertiary),
+            icon: Icon(Icons.file_upload_outlined, color: _cTertiary),
             tooltip: 'Export GPX',
             onPressed: _exportGpx,
           ),
@@ -218,6 +182,13 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
             )
           : ReorderableListView.builder(
               buildDefaultDragHandles: false,
+              // Prevent the default grey Material elevation overlay during drag.
+              proxyDecorator: (child, index, animation) => Material(
+                color: Colors.black,
+                elevation: 4,
+                shadowColor: (_day ? kDDiv : kNDiv).withValues(alpha: 0.5),
+                child: child,
+              ),
               onReorderItem: (oldIndex, newIndex) {
                 setState(() => WaypointService.instance.reorder(oldIndex, newIndex));
               },

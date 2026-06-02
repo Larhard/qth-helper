@@ -26,11 +26,35 @@ import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity(), SensorEventListener {
 
-    // ── GPX file picker ───────────────────────────────────────────────────────
-    // Uses Android's ACTION_OPEN_DOCUMENT intent so no READ_EXTERNAL_STORAGE
-    // permission is needed on Android 10+.  The selected file's content is read
-    // via ContentResolver and returned as a UTF-8 string to Dart.
+    // ── GPX file handling ─────────────────────────────────────────────────────
+    // Two paths:
+    //   1. User picks a file inside the app  (ACTION_OPEN_DOCUMENT → onActivityResult)
+    //   2. User opens a .gpx file from another app  (ACTION_VIEW → readViewIntent)
+    // In both cases the file content is read via ContentResolver and returned to
+    // Dart as a UTF-8 string.
+
     private var filePickerResult: MethodChannel.Result? = null
+    // Content from an ACTION_VIEW intent; consumed once by getPendingGpx().
+    private var pendingGpxContent: String? = null
+
+    private fun readViewIntent(intent: Intent?) {
+        if (intent?.action != Intent.ACTION_VIEW || intent.data == null) return
+        try {
+            pendingGpxContent = contentResolver.openInputStream(intent.data!!)
+                ?.use { it.readBytes().toString(Charsets.UTF_8) }
+        } catch (_: Exception) {}
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        readViewIntent(intent)
+        // Notify the Dart side so it can poll immediately.
+        flutterEngine?.dartExecutor?.binaryMessenger?.let { messenger ->
+            MethodChannel(messenger, "qth_helper/file_picker")
+                .invokeMethod("pendingGpxAvailable", null)
+        }
+    }
 
     @Deprecated("Still required for FlutterActivity compatibility")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
@@ -46,7 +70,7 @@ class MainActivity : FlutterActivity(), SensorEventListener {
                 pending.error("READ_ERROR", e.message, null)
             }
         } else {
-            pending.success(null) // user cancelled
+            pending.success(null)
         }
     }
 
@@ -164,6 +188,8 @@ class MainActivity : FlutterActivity(), SensorEventListener {
             )
         }
 
+        readViewIntent(intent) // cold-start from ACTION_VIEW
+
         proxSensor = sm.getDefaultSensor(Sensor.TYPE_PROXIMITY)
 
         val filter = IntentFilter().apply {
@@ -231,27 +257,30 @@ class MainActivity : FlutterActivity(), SensorEventListener {
         EventChannel(flutterEngine.dartExecutor.binaryMessenger, "qth_helper/environment")
             .setStreamHandler(SensorStreamHandler(this))
 
-        // ── GPX file picker ───────────────────────────────────────────────────
+        // ── GPX file picker + intent receiver ────────────────────────────────
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "qth_helper/file_picker")
             .setMethodCallHandler { call, result ->
-                if (call.method == "pickTextFile") {
-                    filePickerResult = result
-                    @Suppress("DEPRECATION")
-                    startActivityForResult(
-                        Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
-                            addCategory(Intent.CATEGORY_OPENABLE)
-                            type = "*/*"
-                            putExtra(Intent.EXTRA_MIME_TYPES, arrayOf(
-                                "application/gpx+xml",
-                                "application/xml",
-                                "text/xml",
-                                "text/plain",
-                            ))
-                        },
-                        REQUEST_PICK_FILE
-                    )
-                } else {
-                    result.notImplemented()
+                when (call.method) {
+                    "pickTextFile" -> {
+                        // Open system file picker — no MIME filter so all files
+                        // are visible; content is validated on the Dart side.
+                        filePickerResult = result
+                        @Suppress("DEPRECATION")
+                        startActivityForResult(
+                            Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                                addCategory(Intent.CATEGORY_OPENABLE)
+                                type = "*/*"
+                            },
+                            REQUEST_PICK_FILE
+                        )
+                    }
+                    "getPendingGpx" -> {
+                        // Return content from an ACTION_VIEW intent (or null).
+                        // Consumed once so repeated calls return null.
+                        result.success(pendingGpxContent)
+                        pendingGpxContent = null
+                    }
+                    else -> result.notImplemented()
                 }
             }
     }
