@@ -1358,8 +1358,15 @@ class _HomeScreenState extends State<HomeScreen>
 
   Widget _buildPortrait(Position pos) {
     final anchoring = AnchorService.instance.isActive;
+    final nav = WaypointService.instance.active;
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 14, 20, 10),
+      // Layout contract (matches landscape):
+      //   • heading + coordinates are FIXED at the top — always visible.
+      //   • the middle (city, nav waypoint, anchor card) is a scrollable region
+      //     that shrinks/scrolls instead of overlapping its neighbours.  A 2-line
+      //     city name, VHF/call-sign rows, nav + anchor all coexist safely here.
+      //   • the MOB card/button is FIXED at the bottom — always reachable.
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1367,34 +1374,30 @@ class _HomeScreenState extends State<HomeScreen>
           _divider(),
           _coordsSection(),
           _divider(),
-          // When anchoring: compact city + compact nav waypoint + anchor card (priority).
-          // When normal: full city section.
-          if (_nearestCity != null)
-            anchoring
-                ? _citySectionCompact(_nearestCity!)
-                : _citySection(_nearestCity!),
-          if (anchoring) ...[
-            _navWptCompact(pos),   // compact bearing row for nav waypoint (if active)
-            const SizedBox(height: 4),
-            _anchorCard(true),
-          ],
           Expanded(
-            child: Align(
-              alignment: Alignment.bottomLeft,
-              child: Padding(
-                padding: const EdgeInsets.only(bottom: 4),
-                child: ConstrainedBox(
-                  constraints: BoxConstraints(
-                    maxHeight: MediaQuery.of(context).size.height * 0.52,
-                  ),
-                  child: SingleChildScrollView(
-                    reverse: true,
-                    child: anchoring ? _wptSectionAnchorMode(pos) : _wptSection(pos),
-                  ),
-                ),
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (_nearestCity != null)
+                    anchoring
+                        ? _citySectionCompact(_nearestCity!)
+                        : _citySection(_nearestCity!),
+                  if (anchoring) ...[
+                    _navWptCompact(pos),
+                    const SizedBox(height: 4),
+                    _anchorCard(true),
+                  ] else if (nav != null) ...[
+                    const SizedBox(height: 8),
+                    _navWptCard(pos, nav, portrait: true),
+                  ],
+                ],
               ),
             ),
           ),
+          const SizedBox(height: 8),
+          _mobSection(pos: pos, portrait: true),
         ],
       ),
     );
@@ -1459,28 +1462,6 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
-  // Waypoint section used while anchoring — MOB only (nav waypoint hidden).
-  Widget _wptSectionAnchorMode(Position pos) {
-    final mob = WaypointService.instance.emergency;
-    if (mob != null) {
-      return Column(mainAxisSize: MainAxisSize.min, children: [
-        _wptCard(pos, mob, portrait: true),
-      ]);
-    }
-    return SizedBox(
-      width: double.infinity, height: 80,
-      child: ElevatedButton(
-        onPressed: _addWaypoint,
-        style: ElevatedButton.styleFrom(
-          backgroundColor: _cMobBg, foregroundColor: _cMobText,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
-          elevation: 0,
-        ),
-        child: const Text('MOB',
-            style: TextStyle(fontSize: 38, fontWeight: FontWeight.w900, letterSpacing: 5)),
-      ),
-    );
-  }
 
   // ── Landscape layout ─────────────────────────────────────────────────────
   //
@@ -1557,7 +1538,7 @@ class _HomeScreenState extends State<HomeScreen>
                       ),
                     ),
                   ),
-                  _mobSectionLandscape(pos),
+                  _mobSection(pos: pos, portrait: false),
                 ],
               ),
             ),
@@ -2118,11 +2099,15 @@ class _HomeScreenState extends State<HomeScreen>
                     fontWeight: FontWeight.w600,
                     fontFeatures: const [FontFeature.tabularFigures()])),
             const SizedBox(width: 14),
-            Text(nc.city.country,
-                style: TextStyle(
-                    fontSize: 14,
-                    color: subColor.withValues(alpha: 0.7),
-                    fontFeatures: const [FontFeature.tabularFigures()])),
+            Flexible(
+              child: Text(nc.city.country,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                      fontSize: 14,
+                      color: subColor.withValues(alpha: 0.7),
+                      fontFeatures: const [FontFeature.tabularFigures()])),
+            ),
           ]),
           if (nc.city.vhf.isNotEmpty)
             GestureDetector(
@@ -2250,34 +2235,6 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
-  Widget _wptSection(Position pos) {
-    final nav = WaypointService.instance.active;
-    final mob = WaypointService.instance.emergency;
-    return Column(mainAxisSize: MainAxisSize.min, children: [
-      if (nav != null) ...[
-        _navWptCard(pos, nav, portrait: true),
-        const SizedBox(height: 6),
-      ],
-      if (mob != null)
-        _wptCard(pos, mob, portrait: true)
-      else
-        SizedBox(
-          width: double.infinity,
-          height: 80,
-          child: ElevatedButton(
-            onPressed: _addWaypoint,
-            style: ElevatedButton.styleFrom(
-              backgroundColor: _cMobBg, foregroundColor: _cMobText,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
-              elevation: 0,
-            ),
-            child: const Text('MOB',
-                style: TextStyle(fontSize: 38, fontWeight: FontWeight.w900, letterSpacing: 5)),
-          ),
-        ),
-    ]);
-  }
-
   // Nav waypoint only — used in the scrollable top portion of the landscape column.
   Widget _navWptSectionLandscape(Position pos) {
     final nav = WaypointService.instance.active;
@@ -2288,13 +2245,14 @@ class _HomeScreenState extends State<HomeScreen>
     ]);
   }
 
-  // MOB card or button — pinned to the bottom of the landscape right column.
-  Widget _mobSectionLandscape(Position pos) {
+  // MOB card (when active) or MOB button — always pinned to the bottom in both
+  // orientations.  Sized down slightly in landscape.
+  Widget _mobSection({required Position pos, required bool portrait}) {
     final mob = WaypointService.instance.emergency;
-    if (mob != null) return _wptCard(pos, mob, portrait: false);
+    if (mob != null) return _wptCard(pos, mob, portrait: portrait);
     return SizedBox(
       width: double.infinity,
-      height: 62,
+      height: portrait ? 80 : 62,
       child: ElevatedButton(
         onPressed: _addWaypoint,
         style: ElevatedButton.styleFrom(
@@ -2302,8 +2260,11 @@ class _HomeScreenState extends State<HomeScreen>
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
           elevation: 0,
         ),
-        child: const Text('MOB',
-            style: TextStyle(fontSize: 30, fontWeight: FontWeight.w900, letterSpacing: 4)),
+        child: Text('MOB',
+            style: TextStyle(
+                fontSize: portrait ? 38 : 30,
+                fontWeight: FontWeight.w900,
+                letterSpacing: portrait ? 5 : 4)),
       ),
     );
   }
