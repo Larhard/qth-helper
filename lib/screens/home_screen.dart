@@ -140,6 +140,9 @@ class _HomeScreenState extends State<HomeScreen>
       'radius': svc.radiusM, 'warnFrac': svc.warningFraction,
     }).catchError((_) {});
     if (_gpsOnLock) _startPositionStreamBackground(); else _startPositionStream();
+    // Sync the live snapshot so an in-progress alarm shows its overlay at once.
+    await svc.refresh();
+    if (!mounted) return;
     setState(() {});
     _showSettingSnack(
         '⚓ Anchor alarm restored (radius ${svc.radiusM.round()} m). Background service active.');
@@ -370,6 +373,11 @@ class _HomeScreenState extends State<HomeScreen>
       _startPositionStream();
       _requestImmediateGpsFix();
       _checkPendingGpx(); // handle files opened from other apps
+      // Immediately sync the anchor snapshot so the alarm overlay / silence
+      // button appears at once when the service raised the alarm in the
+      // background (e.g. the service launched us, or the user tapped the
+      // notification).  Without this the overlay would wait for the next tick.
+      if (AnchorService.instance.isActive) AnchorService.instance.refresh();
     }
   }
 
@@ -385,6 +393,7 @@ class _HomeScreenState extends State<HomeScreen>
       _cachedAlt = pos.altitude;
       _cachedAccuracy = pos.accuracy;
       _gpsClockOffset = pos.timestamp.difference(DateTime.now());
+      AnchorService.instance.forwardPosition(pos.latitude, pos.longitude);
       setState(() {
         _position = pos;
         _gpsStaleSeconds = 0;
@@ -399,14 +408,16 @@ class _HomeScreenState extends State<HomeScreen>
     // Conditional rebuild: only when the stale counter actually changes.
     if (sec != _gpsStaleSeconds) setState(() => _gpsStaleSeconds = sec);
 
-    // GPS keep-alive while anchoring.
-    if (AnchorService.instance.isActive && sec > 0 && sec % 20 == 0) {
-      _requestImmediateGpsFix();
-    }
-
-    // Battery monitoring while anchoring — check every 30 s.
-    // When not anchoring, _batteryCheckTick is not incremented (zero overhead).
+    // Anchor-only work (zero overhead when not anchoring).
     if (AnchorService.instance.isActive) {
+      // Poll the native authority for the live alarm snapshot (drives the card
+      // + strobe overlay). _onAnchorStateChanged fires via the onStateChanged hook.
+      AnchorService.instance.refresh();
+
+      // GPS keep-alive — request a fresh single-fix if updates have stalled.
+      if (sec > 0 && sec % 20 == 0) _requestImmediateGpsFix();
+
+      // Battery monitoring every 30 s.
       _batteryCheckTick++;
       if (_batteryCheckTick >= 30) {
         _batteryCheckTick = 0;
@@ -466,8 +477,9 @@ class _HomeScreenState extends State<HomeScreen>
   void _onPositionUpdate(Position pos) {
     _lastGpsFix = DateTime.now();
     if (_gpsStaleSeconds > 0) _gpsStaleSeconds = 0;
-    // Notify anchor service on every fix (even when screen is off).
-    AnchorService.instance.onPositionUpdate(pos.latitude, pos.longitude);
+    // Forward the (reliable, fused) foreground fix to the native anchor authority
+    // so its GPS-loss timer is reset by the most reliable source available.
+    AnchorService.instance.forwardPosition(pos.latitude, pos.longitude);
 
     // GPS course is usable above ~0.5 m/s; cache at lower threshold so the
     // secondary arrow appears even at walking pace.
@@ -912,7 +924,7 @@ class _HomeScreenState extends State<HomeScreen>
       case 2:
         _showSnack('⚠ Battery at ${pct.round()} % — anchor alarm may stop working soon!',
             duration: const Duration(seconds: 8));
-        AnchorService.instance.triggerBatteryWarning();
+        AnchorService.instance.escalateBattery(1);
       case 3:
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: Text('⚠ CRITICAL: Battery ${pct.round()} % — anchor alarm at risk!',
@@ -923,14 +935,16 @@ class _HomeScreenState extends State<HomeScreen>
           margin: const EdgeInsets.fromLTRB(16, 0, 16, 8),
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
         ));
-        AnchorService.instance.triggerBatteryAlarm();
+        AnchorService.instance.escalateBattery(2);
     }
   }
 
   void _onAnchorStateChanged() {
     if (!mounted) return;
-    final lvl = AnchorService.instance.level;
-    if (lvl == AnchorAlarmLevel.alarm) {
+    final svc = AnchorService.instance;
+    // The strobe overlay shows only for an UN-silenced alarm.
+    final showStrobe = svc.level == AnchorAlarmLevel.alarm && !svc.isSilenced;
+    if (showStrobe) {
       if (!_strobeCtrl.isAnimating) _strobeCtrl.repeat(reverse: true);
     } else {
       if (_strobeCtrl.isAnimating) _strobeCtrl.stop();

@@ -1,6 +1,7 @@
 import 'package:get_storage/get_storage.dart';
 import '../models/waypoint.dart';
 import '../utils/gpx_utils.dart';
+import '../utils/waypoint_import.dart';
 
 /// Two independent tracking concepts:
 ///
@@ -192,66 +193,40 @@ class WaypointService {
     _persist();
   }
 
-  // Strip trailing " (N)" suffix — used to identify the "family" of a name.
-  // "MOB 1 (2)" → "MOB 1", "B (3)" → "B", "B" → "B".
-  static String _baseName(String name) =>
-      name.replaceAll(RegExp(r'\s+\(\d+\)$'), '');
-
-  /// Import parsed GPX waypoints.
-  ///
-  /// Duplicate detection uses BASE NAMES (suffix-stripped) and positions:
-  ///   - Position AND base-name match → exact duplicate → skip; mark the
-  ///     EXISTING point with a DUPE badge.
-  ///   - Position match but different base name → both coexist; import as NEW.
-  ///   - No position match but base-name conflict → rename "Base (N)"; import as NEW.
-  ///   - No conflict → import as-is; mark as NEW.
+  /// Import parsed GPX waypoints using the pure [WaypointImporter] planner.
+  /// Applies the plan: assigns IDs, sets NEW/DUPE highlight badges, persists.
   ({int added, int skipped, int renamed}) importWaypoints(List<GpxWaypoint> items) {
     _lastImportIds.clear();
     _newlyAddedIds.clear();
     _dupFoundIds.clear();
 
-    int added = 0, skipped = 0, renamed = 0;
+    final planResult = WaypointImporter.plan(
+      existing: [
+        for (final w in _waypoints)
+          ExistingWaypoint(id: w.id, name: w.name, lat: w.lat, lon: w.lon),
+      ],
+      incoming: items,
+    );
+
+    _dupFoundIds.addAll(planResult.dupExistingIds);
+
     final baseMs = DateTime.now().millisecondsSinceEpoch;
-    const tol = 0.0001; // ~10 m in degrees
-
-    for (final item in items) {
-      final baseIn = _baseName(item.name);
-
-      // 1. Position + base-name match → exact duplicate.
-      //    The EXISTING point gets a DUPE badge so the user can see what was skipped.
-      final posMatches = _waypoints.where((e) =>
-          (e.lat - item.lat).abs() < tol &&
-          (e.lon - item.lon).abs() < tol);
-      final exactDup = posMatches
-          .where((e) => _baseName(e.name) == baseIn)
-          .firstOrNull;
-      if (exactDup != null) {
-        _dupFoundIds.add(exactDup.id);
-        skipped++;
-        continue;
-      }
-
-      // 2. No exact duplicate → will import.
-      //    Base-name conflict (regardless of position) → rename "Base (N)".
-      String name = item.name;
-      if (_waypoints.any((e) => _baseName(e.name) == baseIn)) {
-        final base = _baseName(name);
-        int n = 2;
-        while (_waypoints.any((e) => e.name == '$base ($n)')) n++;
-        name = '$base ($n)';
-        renamed++;
-      }
-
-      final id = '${baseMs + added}';
+    var i = 0;
+    for (final p in planResult.toAdd) {
+      final id = '${baseMs + i}';
+      i++;
       _waypoints.add(Waypoint(
-        id: id, name: name, lat: item.lat, lon: item.lon, timestamp: item.time,
+        id: id, name: p.name, lat: p.lat, lon: p.lon, timestamp: p.time,
       ));
       _newlyAddedIds.add(id);
       _lastImportIds.add(id);
-      added++;
     }
-    if (added > 0) _persist();
-    return (added: added, skipped: skipped, renamed: renamed);
+    if (planResult.added > 0) _persist();
+    return (
+      added: planResult.added,
+      skipped: planResult.skipped,
+      renamed: planResult.renamed,
+    );
   }
 
   void _persist() {

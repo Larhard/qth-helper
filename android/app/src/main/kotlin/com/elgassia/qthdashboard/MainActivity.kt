@@ -300,13 +300,17 @@ class MainActivity : FlutterActivity(), SensorEventListener {
             }
 
         // ── Anchor alarm ─────────────────────────────────────────────────────
+        // Hardware + level logic live in AnchorController / AnchorMonitorService.
+        // These channel methods are thin bridges only.
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "qth_helper/anchor_alarm")
             .setMethodCallHandler { call, result ->
                 when (call.method) {
-                    "startWarning"    -> { anchorAlarm.startWarning(); result.success(null) }
-                    "startAlarm"      -> { anchorAlarm.startAlarm();   result.success(null) }
-                    "stopAlarm"       -> { anchorAlarm.stop();          result.success(null) }
-                    "testAlarm"       -> { anchorAlarm.test();          result.success(null) }
+                    "testAlarm" -> {
+                        // Toggle: returns true if now testing, false if stopped.
+                        val mgr = AnchorAlarmManager.getInstance(this)
+                        mgr.toggleTest()
+                        result.success(mgr.isTesting)
+                    }
                     "startAnchorService" -> {
                         val lat  = call.argument<Double>("lat")  ?: 0.0
                         val lon  = call.argument<Double>("lon")  ?: 0.0
@@ -327,6 +331,20 @@ class MainActivity : FlutterActivity(), SensorEventListener {
                         })
                         result.success(null)
                     }
+                    "getAnchorSnapshot"   -> result.success(AnchorController.snapshot())
+                    "silenceAnchor"       -> { AnchorController.silence(); result.success(null) }
+                    "escalateBattery"     -> {
+                        AnchorController.escalateBattery(call.argument<Int>("floor") ?: 0)
+                        result.success(null)
+                    }
+                    "forwardPosition"     -> {
+                        // Foreground forwards its (reliable, fused) fixes so the
+                        // GPS-loss timer is reset by the most reliable source.
+                        AnchorController.onPosition(
+                            call.argument<Double>("lat") ?: 0.0,
+                            call.argument<Double>("lon") ?: 0.0)
+                        result.success(null)
+                    }
                     "getBatteryLevel" -> {
                         val intent = registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
                         val level  = intent?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
@@ -338,9 +356,6 @@ class MainActivity : FlutterActivity(), SensorEventListener {
                 }
             }
     }
-
-    // ── Anchor alarm manager ──────────────────────────────────────────────────
-    private val anchorAlarm by lazy { AnchorAlarmManager(this) }
 
     companion object {
         private const val REQUEST_PICK_FILE = 1001

@@ -514,7 +514,9 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
     // Initialise sliders from existing or default values.
     double radius   = isActive ? svc.radiusM         : 50.0;
     double warnFrac = isActive ? svc.warningFraction  : 0.80;
+    bool   testing  = false;
 
+    const testCh = MethodChannel('qth_helper/anchor_alarm');
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -600,20 +602,26 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
               const SizedBox(height: 16),
 
               // ── Test alarm ───────────────────────────────────────────────
-              // Plays the alarm at 20 % volume for ~6 s so the crew can verify
-              // the alarm will be audible before actually anchoring.
+              // Toggle: plays the alarm timbre at 20 % volume from all outputs
+              // (speaker + headphones) so the crew can verify audibility.
+              // Tap again to stop; auto-stops after 60 s.
               OutlinedButton.icon(
                 style: OutlinedButton.styleFrom(
-                  foregroundColor: _day ? kDFg3 : kN3,
-                  side: BorderSide(color: _day ? kDBrd : kNDiv),
+                  foregroundColor: testing ? (_day ? kDStale : kN1) : (_day ? kDFg3 : kN3),
+                  side: BorderSide(
+                      color: testing ? (_day ? kDStale : kN1) : (_day ? kDBrd : kNDiv)),
                 ),
-                icon: const Icon(Icons.volume_up_outlined, size: 16),
-                label: const Text('Test alarm (quiet)'),
-                onPressed: () {
+                icon: Icon(testing ? Icons.stop_circle_outlined : Icons.volume_up_outlined, size: 16),
+                label: Text(testing ? 'Stop test' : 'Test alarm (quiet)'),
+                onPressed: () async {
                   const ch = MethodChannel('qth_helper/anchor_alarm');
-                  ch.invokeMethod('testAlarm').catchError((_) {});
-                  _snack('Playing 6 s test alarm at 20 % volume.',
-                      duration: const Duration(seconds: 7));
+                  final nowTesting =
+                      await ch.invokeMethod<bool>('testAlarm') ?? false;
+                  setS(() => testing = nowTesting);
+                  _snack(nowTesting
+                      ? 'Testing alarm at 20 % volume — tap again to stop.'
+                      : 'Test stopped.',
+                      duration: const Duration(seconds: 3));
                 },
               ),
               const SizedBox(height: 16),
@@ -660,7 +668,10 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
           ),
         ),
       ),
-    );
+    ).whenComplete(() {
+      // Always stop a running test when the sheet is dismissed.
+      if (testing) testCh.invokeMethod('testAlarm').catchError((_) {});
+    });
   }
 
   void _showEditSheet(Waypoint? existing) {

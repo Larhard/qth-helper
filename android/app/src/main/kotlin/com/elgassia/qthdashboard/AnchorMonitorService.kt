@@ -3,37 +3,30 @@ package com.elgassia.qthdashboard
 import android.annotation.SuppressLint
 import android.app.Notification
 import android.app.NotificationChannel
-import android.content.SharedPreferences
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
-import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import kotlin.math.roundToInt
 
 /**
- * Background foreground-service that monitors anchor position and fires the
- * alarm hardware even when the Flutter app is killed.
+ * Foreground service that keeps the anchor alarm alive even when the Flutter
+ * activity is killed.  It is the GPS feeder and notification owner; all level
+ * logic and hardware live in [AnchorController] (the single authority).
  *
- * Lifecycle:
- *   Start  — ACTION_START with lat/lon/radius/warnFrac extras
- *   Stop   — ACTION_STOP (or user lifts anchor)
- *
- * The service shows a persistent notification that returns the user to the app.
- * When the alarm level changes the notification is updated to reflect the state.
- *
- * Battery: the service is only started when the anchor is deployed.  It uses
- * LocationManager.GPS_PROVIDER with a 3 s interval and 0 m distance filter so
- * stationary updates are always delivered.
+ * Battery: only ever started when an anchor is deployed.  Uses GPS_PROVIDER
+ * (and NETWORK_PROVIDER as a redundant feed) at a 2 s / 0 m cadence so
+ * stationary fixes are always delivered.  When the foreground app is alive it
+ * ALSO forwards its (fused, more reliable) fixes into AnchorController, so the
+ * GPS-loss timer is reset by whichever source delivers first.
  */
 class AnchorMonitorService : Service() {
-
-    // ── Alarm levels (mirrors AnchorService.AnchorAlarmLevel in Dart) ────────
-    private enum class Level { IDLE, WARNING, ALARM }
 
     companion object {
         const val ACTION_START = "com.elgassia.qthdashboard.ANCHOR_START"
@@ -43,105 +36,88 @@ class AnchorMonitorService : Service() {
         const val PREFS_NAME   = "anchor_monitor_state"
     }
 
-    // ── State ─────────────────────────────────────────────────────────────────
-    private var anchorLat  = 0.0
-    private var anchorLon  = 0.0
-    private var radiusM    = 50.0
-    private var warnFrac   = 0.80
-    private var level      = Level.IDLE
-    private var distanceM  = 0.0
-
-    // ── Hardware ──────────────────────────────────────────────────────────────
-    private val alarm by lazy { AnchorAlarmManager(this) }
     private var locManager: LocationManager? = null
+    private val handler = Handler(Looper.getMainLooper())
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // Service lifecycle
-    // ─────────────────────────────────────────────────────────────────────────
+    // ── Lifecycle ──────────────────────────────────────────────────────────────
 
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
+        AnchorController.onStateChanged   = { updateNotification() }
+        AnchorController.onAlarmEscalated = { launchActivity() }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_START -> {
-                anchorLat = intent.getDoubleExtra("lat",      0.0)
-                anchorLon = intent.getDoubleExtra("lon",      0.0)
-                radiusM   = intent.getDoubleExtra("radius",  50.0)
-                warnFrac  = intent.getDoubleExtra("warnFrac", 0.80)
-                saveState()
+                val lat = intent.getDoubleExtra("lat",      0.0)
+                val lon = intent.getDoubleExtra("lon",      0.0)
+                val r   = intent.getDoubleExtra("radius",  50.0)
+                val wf  = intent.getDoubleExtra("warnFrac", 0.80)
+                saveState(lat, lon, r, wf)
+                AnchorController.start(this, lat, lon, r, wf)
                 startForeground(NOTIF_ID, buildNotification())
                 startGps()
+                startTicker()
             }
             ACTION_STOP -> {
                 clearState()
-                alarm.stop()
-                stopGps()
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                AnchorController.stopAll()
+                stopGps(); stopTicker()
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N)
                     stopForeground(STOP_FOREGROUND_REMOVE)
-                } else {
-                    @Suppress("DEPRECATION")
-                    stopForeground(true)
-                }
+                else @Suppress("DEPRECATION") stopForeground(true)
                 stopSelf()
             }
             null -> {
-                // START_STICKY restart by Android after process kill.
-                // Restore state from SharedPreferences.
-                val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-                if (!prefs.getBoolean("active", false)) {
-                    stopSelf(); return START_NOT_STICKY
-                }
-                anchorLat = prefs.getFloat("lat",      0f).toDouble()
-                anchorLon = prefs.getFloat("lon",      0f).toDouble()
-                radiusM   = prefs.getFloat("radius",  50f).toDouble()
-                warnFrac  = prefs.getFloat("warnFrac", 0.80f).toDouble()
+                // START_STICKY restart after process kill — restore from prefs.
+                val p = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                if (!p.getBoolean("active", false)) { stopSelf(); return START_NOT_STICKY }
+                AnchorController.start(this,
+                    p.getFloat("lat", 0f).toDouble(),
+                    p.getFloat("lon", 0f).toDouble(),
+                    p.getFloat("radius", 50f).toDouble(),
+                    p.getFloat("warnFrac", 0.80f).toDouble())
                 startForeground(NOTIF_ID, buildNotification())
-                startGps()
+                startGps(); startTicker()
             }
         }
         return START_STICKY
     }
 
-    private fun saveState() {
-        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
-            .putBoolean("active",   true)
-            .putFloat("lat",        anchorLat.toFloat())
-            .putFloat("lon",        anchorLon.toFloat())
-            .putFloat("radius",     radiusM.toFloat())
-            .putFloat("warnFrac",   warnFrac.toFloat())
-            .apply()
-    }
-
-    private fun clearState() {
-        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit().clear().apply()
-    }
-
     override fun onDestroy() {
-        alarm.stop()
-        stopGps()
+        stopGps(); stopTicker()
+        AnchorController.onStateChanged = null
+        AnchorController.onAlarmEscalated = null
         super.onDestroy()
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // GPS monitoring
-    // ─────────────────────────────────────────────────────────────────────────
+    // ── State persistence (for START_STICKY restart) ────────────────────────────
+
+    private fun saveState(lat: Double, lon: Double, r: Double, wf: Double) {
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
+            .putBoolean("active", true)
+            .putFloat("lat", lat.toFloat()).putFloat("lon", lon.toFloat())
+            .putFloat("radius", r.toFloat()).putFloat("warnFrac", wf.toFloat())
+            .apply()
+    }
+
+    private fun clearState() =
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit().clear().apply()
+
+    // ── GPS ─────────────────────────────────────────────────────────────────────
 
     @SuppressLint("MissingPermission")
     private fun startGps() {
         locManager = getSystemService(LOCATION_SERVICE) as LocationManager
-        try {
-            locManager?.requestLocationUpdates(
-                LocationManager.GPS_PROVIDER,
-                3_000L, // 3 s interval
-                0f,     // no distance filter — stationary updates delivered
-                locationListener,
-            )
-        } catch (_: Exception) {}
+        for (provider in listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER)) {
+            try {
+                locManager?.requestLocationUpdates(provider, 2_000L, 0f, locationListener)
+            } catch (_: Exception) {}
+        }
     }
 
     private fun stopGps() {
@@ -149,48 +125,39 @@ class AnchorMonitorService : Service() {
         locManager = null
     }
 
-    private val locationListener = LocationListener { location ->
-        val dist = FloatArray(1)
-        Location.distanceBetween(
-            location.latitude, location.longitude,
-            anchorLat, anchorLon,
-            dist,
-        )
-        distanceM = dist[0].toDouble()
-        updateAlarmLevel()
+    private val locationListener = LocationListener { loc ->
+        AnchorController.onPosition(loc.latitude, loc.longitude)
     }
 
-    private fun updateAlarmLevel() {
-        val newLevel = when {
-            distanceM >= radiusM          -> Level.ALARM
-            distanceM >= radiusM * warnFrac -> Level.WARNING
-            else                          -> Level.IDLE
+    // ── 1 s ticker — drives the GPS-loss timer ─────────────────────────────────
+
+    private val ticker = object : Runnable {
+        override fun run() {
+            AnchorController.tick()
+            handler.postDelayed(this, 1_000L)
         }
-        if (newLevel != level) {
-            level = newLevel
-            when (level) {
-                Level.ALARM   -> alarm.startAlarm()
-                Level.WARNING -> alarm.startWarning()
-                Level.IDLE    -> alarm.stop()
-            }
-        }
-        updateNotification()
+    }
+    private fun startTicker() { handler.removeCallbacks(ticker); handler.post(ticker) }
+    private fun stopTicker()  { handler.removeCallbacks(ticker) }
+
+    // ── Activity launch on alarm ────────────────────────────────────────────────
+
+    private fun launchActivity() {
+        try {
+            startActivity(Intent(this, MainActivity::class.java).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or
+                         Intent.FLAG_ACTIVITY_SINGLE_TOP or
+                         Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+            })
+        } catch (_: Exception) {}
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // Notification
-    // ─────────────────────────────────────────────────────────────────────────
+    // ── Notification ──────────────────────────────────────────────────────────────
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val ch = NotificationChannel(
-                CHANNEL_ID,
-                "Anchor Monitor",
-                // IMPORTANCE_LOW: visible in notification shade, no sound/heads-up.
-                // The alarm hardware is handled by AnchorAlarmManager, not by this
-                // notification, so we deliberately suppress notification-level audio.
-                NotificationManager.IMPORTANCE_LOW,
-            ).apply {
+            val ch = NotificationChannel(CHANNEL_ID, "Anchor Monitor",
+                NotificationManager.IMPORTANCE_LOW).apply {
                 description = "Persistent anchor status — tap to return to QTH Dashboard"
                 setSound(null, null)
                 setShowBadge(true)
@@ -201,45 +168,37 @@ class AnchorMonitorService : Service() {
     }
 
     private fun buildNotification(): Notification {
-        val tapIntent = PendingIntent.getActivity(
+        val tap = PendingIntent.getActivity(
             this, 0,
             Intent(this, MainActivity::class.java).apply {
-                flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
             },
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-        )
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
 
-        val (title, text) = when (level) {
-            Level.ALARM   -> Pair("⚓ ANCHOR ALARM",     "Outside radius! ${distanceM.roundToInt()} m from anchor")
-            Level.WARNING -> Pair("⚓ Anchor Warning",   "Approaching boundary — ${distanceM.roundToInt()} m of ${radiusM.roundToInt()} m")
-            Level.IDLE    -> Pair("⚓ Anchor Active",    "Riding safely — ${distanceM.roundToInt()} m of ${radiusM.roundToInt()} m")
+        val dist = AnchorController.distanceM.roundToInt()
+        val rad  = AnchorController.radiusM.roundToInt()
+        val (title, text) = when (AnchorController.level) {
+            2 -> "⚓ ANCHOR ALARM"   to (if (AnchorController.gpsLossSeconds >= 180)
+                    "GPS lost ${AnchorController.gpsLossSeconds}s" else "Outside radius! $dist m from anchor")
+            1 -> "⚓ Anchor Warning" to "Approaching boundary — $dist m of $rad m"
+            else -> "⚓ Anchor Active" to "Riding — $dist m of $rad m"
         }
 
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            Notification.Builder(this, CHANNEL_ID)
-                .setContentTitle(title)
-                .setContentText(text)
-                .setSmallIcon(android.R.drawable.ic_dialog_alert)
-                .setContentIntent(tapIntent)
-                .setOngoing(true)
-                .setOnlyAlertOnce(true)
-                .build()
-        } else {
-            @Suppress("DEPRECATION")
-            Notification.Builder(this)
-                .setContentTitle(title)
-                .setContentText(text)
-                .setSmallIcon(android.R.drawable.ic_dialog_alert)
-                .setContentIntent(tapIntent)
-                .setOngoing(true)
-                .build()
-        }
+        val b = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+            Notification.Builder(this, CHANNEL_ID) else
+            @Suppress("DEPRECATION") Notification.Builder(this)
+        return b.setContentTitle(title)
+            .setContentText(text)
+            .setSmallIcon(android.R.drawable.ic_dialog_alert)
+            .setContentIntent(tap)
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .build()
     }
 
     private fun updateNotification() {
         try {
-            getSystemService(NotificationManager::class.java)
-                ?.notify(NOTIF_ID, buildNotification())
+            getSystemService(NotificationManager::class.java)?.notify(NOTIF_ID, buildNotification())
         } catch (_: Exception) {}
     }
 }

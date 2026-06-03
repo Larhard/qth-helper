@@ -301,12 +301,20 @@ lib/
 │   ├── environment_service.dart # EventChannel wrapper for sensor stream
 │   └── waypoint_service.dart    # MOB + nav waypoints; GPX import with dedup + undo
 └── utils/
+    ├── anchor_math.dart         # Pure anchor alarm level logic (unit-tested spec)
     ├── coordinate_utils.dart    # DDM / DD / DMS + Maidenhead encode/decode
     ├── geo_utils.dart           # Haversine distance + bearing
     ├── gpx_utils.dart           # GPX 1.1 parse (xml package) + build (XmlBuilder)
     ├── mgrs_utils.dart          # MGRS encode/decode
     ├── track_bearing.dart       # Smoothed track bearing from spatial point buffer
-    └── units.dart               # ALL colour constants (kD*/kN*) + unit preferences
+    ├── units.dart               # ALL colour constants (kD*/kN*) + unit preferences
+    └── waypoint_import.dart     # Pure GPX import dedup/rename planner (unit-tested)
+
+android/app/src/main/kotlin/.../
+    ├── MainActivity.kt          # Flutter channels (thin bridges)
+    ├── AnchorController.kt      # Single authority: level logic + state (object)
+    ├── AnchorAlarmManager.kt    # Process-singleton hardware driver
+    └── AnchorMonitorService.kt  # Foreground service: GPS feed + notification
 ```
 
 ### Module boundaries
@@ -325,42 +333,114 @@ are the only layer that touches `BuildContext`, `setState`, and `Navigator`.
 
 ## 7. Alarm & Safety Systems
 
-### 7.1 Anchor alarm guarantee
+### 7.1 Single-authority rule (CRITICAL)
 
-The anchor alarm must produce audible output in all of the following states:
-- Phone muted / silent mode
-- Do Not Disturb active
-- Screen locked
-- Screen on with another app in focus
-- Volume at 0
+There must be exactly **one** component that computes the anchor alarm level and
+**one** that drives the hardware, per process.  Field testing exposed a class of
+bug — audio "breakup" (rapid start/stop) — caused by two `AnchorAlarmManager`
+instances (one in `MainActivity`, one in `AnchorMonitorService`) each requesting
+`AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE` and evicting the other.
 
-Implementation: `AudioTrack` on `STREAM_ALARM` with `AudioAttributes.USAGE_ALARM`.
-Before starting, set `AudioManager.setStreamVolume(STREAM_ALARM, max, 0)` and
-request `AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE`. The `USAGE_ALARM` attribute bypasses
-DND at the "Priority Only" level on all modern Android versions without additional
-permissions. Total-silence DND bypass requires `ACCESS_NOTIFICATION_POLICY`
-(requested optionally; alarm still sounds in priority-only mode without it).
+The architecture that prevents this:
 
-### 7.2 Alarm audio design
+| Component | Role |
+|---|---|
+| `AnchorAlarmManager` (Kotlin) | **Process singleton** (`getInstance`). The only object that touches `AudioTrack`, the vibrator, the torch, and the wake lock. |
+| `AnchorController` (Kotlin `object`) | The single authority for level computation + state. Owns the one alarm manager. Both the service and `MainActivity` delegate here. |
+| `AnchorMonitorService` (Kotlin) | Foreground service: GPS feeder + notification owner. Feeds positions/ticks into `AnchorController`. Launches the activity on alarm escalation. |
+| `AnchorService` (Dart) | **Pure presenter.** Holds persisted config, polls `getAnchorSnapshot` once per second for display, drives the strobe overlay. Never calls alarm hardware directly. |
 
-- **Level 1 (Warning):** 523 Hz + 784 Hz (perfect 5th) alternating, 50 % duty cycle,
-  soft amplitude. Urgent but not panic-inducing. Every 8 s.
-- **Level 2 (Alarm):** Synthesised siren sweep 400–1200 Hz with second harmonic at
-  2× frequency shifted 90°. Creates dissonance and urgency. Continuous, looping.
-  Volume at absolute maximum of `STREAM_ALARM`.
-- Both levels use `AudioTrack` with looping PCM data — no `ToneGenerator` (unreliable
-  when other audio focus is active, skips when screen is on).
+The Dart side NEVER drives the alarm hardware. If it did, it would be a second
+authority and the dual-instance conflict would return.
 
-### 7.3 GPS keep-alive when stationary
+### 7.2 Anchor alarm guarantee
 
-Android GPS receivers can stop delivering updates when the device is stationary.
-When the anchor alarm is active, the stale timer calls `_requestImmediateGpsFix()`
-every 20 s if no position update has been received. This wakes the GNSS receiver
-and delivers a fresh fix without continuous power drain.
+The alarm must be audible in all of these states:
+- silent / muted, Do Not Disturb, screen locked, **screen on with another app
+  in focus** (this was the regression), volume at 0.
+
+Implementation in `AnchorAlarmManager`:
+- `AudioTrack` (never `ToneGenerator` — it skips when the screen is on or another
+  stream holds focus).
+- `STREAM_ALARM` forced to max before play; `USAGE_ALARM` bypasses DND priority-only.
+- Exclusive audio focus is **held until stop()**; the focus-change listener is a
+  no-op so transient focus loss never self-silences the alarm.
+- **Dual output:** one track pinned to the built-in speaker
+  (`setPreferredDevice(TYPE_BUILTIN_SPEAKER)`) so the alarm is always audible in
+  the physical space, plus — only when an external output (BT/wired/USB) is
+  connected — a companion track on the default route so headphone wearers also
+  hear it. The companion is skipped when no external output exists, to avoid
+  speaker comb-filtering.
+
+### 7.3 Alarm audio design
+
+- **Warning:** a single soft 880 Hz ping (250 ms, faded), played ONCE every 8 s —
+  a gentle one-shot nudge, not a continuous tone. Audible at volume 0.
+- **Alarm:** continuous looping siren — two tones a **tritone (√2 ≈ 1.414) apart**
+  sweeping 400→1200 Hz, summed and hard-clipped. The tritone is the most dissonant
+  Western interval; the result is deliberately harsh. Max volume, continuous.
+- **Test:** the same alarm timbre at 20 % volume from all outputs, toggled on/off
+  by the setup-sheet button (auto-stops after 60 s).
+
+### 7.4 Persistence & survival
+
+- Config (lat/lon/radius/warnFrac) is persisted in both GetStorage (Dart) and the
+  service's SharedPreferences (Kotlin). On `START_STICKY` restart the service
+  restores from prefs and resumes with zero Flutter involvement.
+- On app relaunch, `AnchorService.loadFromStorage()` restores config and the home
+  screen re-syncs the live snapshot via `refresh()`, so an in-progress alarm shows
+  its overlay immediately.
+- On alarm escalation while only the background service is alive, the service
+  launches `MainActivity` (full-screen intent) so the silence UI appears.
+
+### 7.5 GPS reliability when stationary
+
+Two independent feeds keep the GPS-loss timer fresh:
+- The service's own `LocationManager` (GPS + NETWORK providers, 2 s / 0 m).
+- The foreground forwards its (fused, more reliable) geolocator fixes via
+  `forwardPosition`. The foreground stream uses `distanceFilter = 0` +
+  `intervalDuration = 3 s` while anchoring so stationary fixes are delivered.
+- `AnchorController` tracks the last-fix time on a monotonic clock; either feed
+  resets it. GPS-loss escalation: 60 s → warning, 180 s → alarm (see `AnchorMath`).
+
+### 7.6 Level-logic duplication is intentional
+
+The alarm level rules live in **two** places that MUST stay in sync:
+- `lib/utils/anchor_math.dart` (`AnchorMath`) — the canonical, unit-tested spec.
+- `android/.../AnchorController.kt` (`recompute`) — needed because the service
+  must evaluate the level when the Flutter engine is dead.
+
+Any threshold change requires editing **both**. The Dart copy is covered by
+`test/anchor_math_test.dart`.
+
+### 7.7 Battery budget for alarms
+
+- The background service is started **only** when an anchor is deployed and
+  stopped the moment it is lifted (or on `START_STICKY` restart when prefs show
+  no active anchor → immediate `stopSelf`).
+- Battery monitoring, GPS keep-alive, and snapshot polling run **only** inside the
+  `if (AnchorService.instance.isActive)` branch of the 1 Hz stale timer — zero
+  added cost when not anchoring.
+- When not anchoring the app's baseline budget (§5.5) is unchanged.
 
 ---
 
-## 8. Version history note
+## 8. Testing
+
+- Pure, deterministic logic lives in `lib/utils/` and is unit-tested with no I/O,
+  no platform channels, and no `GetStorage`. This is why duplicate-detection was
+  extracted into `WaypointImporter` and alarm levels into `AnchorMath`.
+- The test suite (`test/`) MUST stay green before any release build:
+  - `anchor_math_test.dart` — every alarm threshold + "highest level wins" (safety-critical).
+  - `geo_utils_test.dart` — haversine + bearing against known values.
+  - `gpx_utils_test.dart` — track-point exclusion, entity decoding, round-trip.
+  - `waypoint_import_test.dart` — duplicate/rename rules incl. the worked example.
+- New safety-relevant logic must ship with tests. Prefer extracting a pure
+  function over testing through a widget or platform channel.
+
+---
+
+## 9. Version history note
 
 The app started as a proof-of-concept GPS heading display and grew iteratively
 through field testing into a full maritime/radio/hiking dashboard. The architecture

@@ -1,19 +1,19 @@
-import 'dart:async';
 import 'package:flutter/services.dart';
 import 'package:get_storage/get_storage.dart';
-import '../utils/geo_utils.dart';
+import '../utils/anchor_math.dart';
 
-enum AnchorAlarmLevel { idle, warning, alarm }
+export '../utils/anchor_math.dart' show AnchorAlarmLevel;
 
-/// Manages anchor alarm state, position checking, and GPS-loss escalation.
+/// Foreground presenter for the anchor alarm.
 ///
-/// Alarm levels:
-///   idle    — inside safe zone (distance < warningFraction × radius)
-///   warning — approaching boundary (warningFraction × radius ≤ dist < radius)
-///             OR GPS lost 60–180 s
-///   alarm   — outside radius OR GPS lost > 180 s
+/// The single source of truth for level computation and hardware is the native
+/// [AnchorController] / [AnchorMonitorService].  This Dart class:
+///   • holds the persisted anchor configuration (so the UI knows radius etc.),
+///   • mirrors the live snapshot polled from native (for display only),
+///   • starts/stops the background service and persists config across kills.
 ///
-/// GPS-loss timings: 60 s → warning, 180 s → alarm.
+/// It does NOT drive the alarm hardware directly — that would create a second
+/// authority and the dual-instance audio conflict that field testing exposed.
 class AnchorService {
   AnchorService._();
   static final instance = AnchorService._();
@@ -29,31 +29,22 @@ class AnchorService {
   static const _kWarnFrac = 'anchor_warn_frac';
   static const _kPrevGps  = 'anchor_prev_gps';
 
-  // ── Anchor state ────────────────────────────────────────────────────────────
+  // ── Configuration (persisted) ────────────────────────────────────────────────
   double? _lat, _lon;
   double  _radiusM         = 50.0;
-  double  _warningFraction = 0.80; // phase 1 starts at this fraction of radius
+  double  _warningFraction = 0.80;
+  bool    _active          = false;
+  bool    _prevGpsOnLock   = false;
 
-  bool _active = false;
+  // ── Live snapshot (polled from native) ───────────────────────────────────────
   AnchorAlarmLevel _level = AnchorAlarmLevel.idle;
   double? _distanceM;
-  double? _bearingDeg; // bearing FROM current position TO anchor
+  double? _bearingDeg;
+  int     _gpsLossSeconds = 0;
+  bool    _silenced       = false;
+  bool    _hasFix         = false;
 
-  // Whether the alarm audio/vibration has been silenced by the user (level
-  // stays in place so the visual indicators persist until anchor is lifted).
-  bool _silenced = false;
-
-  // ── GPS loss tracking ────────────────────────────────────────────────────────
-  DateTime? _lastGpsTime;
-  Timer?    _gpsLossTimer;
-  int       _gpsLossSeconds = 0;
-  bool      _gpsLost        = false;
-
-  // ── GPS-on-lock save/restore ─────────────────────────────────────────────────
-  bool _prevGpsOnLock = false;
-
-  // ── Notification callback ────────────────────────────────────────────────────
-  // Set by _HomeScreenState; called whenever any state changes.
+  /// Called by the UI whenever the polled snapshot changes.
   void Function()? onStateChanged;
 
   // ── Getters ─────────────────────────────────────────────────────────────────
@@ -65,13 +56,12 @@ class AnchorService {
   double?          get anchorLat       => _lat;
   double?          get anchorLon       => _lon;
   AnchorAlarmLevel get level           => _level;
-  bool             get gpsLost         => _gpsLost;
+  bool             get gpsLost         => _gpsLossSeconds >= 10;
   int              get gpsLossSeconds  => _gpsLossSeconds;
   bool             get isSilenced      => _silenced;
+  bool             get hasFix          => _hasFix;
   bool             get prevGpsOnLock   => _prevGpsOnLock;
-
-  // Warning-zone radius in metres (convenience for UI display).
-  double get warningRadiusM => _radiusM * _warningFraction;
+  double           get warningRadiusM  => _radiusM * _warningFraction;
 
   // ── Lifecycle ────────────────────────────────────────────────────────────────
 
@@ -82,191 +72,96 @@ class AnchorService {
     required double warningFraction,
     required bool   prevGpsOnLock,
   }) {
-    _lat             = lat;
-    _lon             = lon;
-    _radiusM         = radiusM;
-    _warningFraction = warningFraction;
-    _prevGpsOnLock   = prevGpsOnLock;
-    _active          = true;
-    _level           = AnchorAlarmLevel.idle;
-    _silenced        = false;
-    _gpsLost         = false;
-    _gpsLossSeconds  = 0;
-    _lastGpsTime     = DateTime.now();
-    _distanceM       = 0.0;
-    _bearingDeg      = 0.0;
+    _lat = lat; _lon = lon;
+    _radiusM = radiusM; _warningFraction = warningFraction;
+    _prevGpsOnLock = prevGpsOnLock;
+    _active = true;
+    _level = AnchorAlarmLevel.idle;
+    _silenced = false; _hasFix = false;
+    _gpsLossSeconds = 0; _distanceM = 0.0; _bearingDeg = 0.0;
     _persist();
-    _startGpsLossTimer();
     onStateChanged?.call();
   }
 
   void liftAnchor() {
-    _active         = false;
-    _level          = AnchorAlarmLevel.idle;
-    _silenced       = false;
-    _distanceM      = null;
-    _bearingDeg     = null;
-    _gpsLossSeconds = 0;
-    _gpsLost        = false;
-    _gpsLossTimer?.cancel();
-    _gpsLossTimer   = null;
+    _active = false;
+    _level = AnchorAlarmLevel.idle;
+    _silenced = false; _hasFix = false;
+    _distanceM = null; _bearingDeg = null; _gpsLossSeconds = 0;
     _clearPersisted();
-    _stopNative();
     onStateChanged?.call();
   }
 
-  // ── Persistence ──────────────────────────────────────────────────────────────
-
-  void _persist() {
-    _store.write(_kActive,   true);
-    _store.write(_kLat,      _lat);
-    _store.write(_kLon,      _lon);
-    _store.write(_kRadius,   _radiusM);
-    _store.write(_kWarnFrac, _warningFraction);
-    _store.write(_kPrevGps,  _prevGpsOnLock);
-  }
-
-  void _clearPersisted() {
-    _store.remove(_kActive);
-    _store.remove(_kLat);
-    _store.remove(_kLon);
-    _store.remove(_kRadius);
-    _store.remove(_kWarnFrac);
-    _store.remove(_kPrevGps);
-  }
-
-  /// Restore anchor state from storage after the app was killed.
-  /// Returns true if an active anchor was found and restored.
+  /// Restore configuration after the app was killed.  Returns true if an
+  /// anchor was active.  The live snapshot is then re-synced via [refresh].
   bool loadFromStorage() {
     if (!(_store.read<bool>(_kActive) ?? false)) return false;
-    _lat             = _store.read<double>(_kLat);
-    _lon             = _store.read<double>(_kLon);
-    _radiusM         = _store.read<double>(_kRadius)   ?? 50.0;
+    _lat = _store.read<double>(_kLat);
+    _lon = _store.read<double>(_kLon);
+    _radiusM = _store.read<double>(_kRadius) ?? 50.0;
     _warningFraction = _store.read<double>(_kWarnFrac) ?? 0.80;
-    _prevGpsOnLock   = _store.read<bool>(_kPrevGps)   ?? true;
-    _active          = true;
-    _level           = AnchorAlarmLevel.idle;
-    _silenced        = false;
-    _gpsLost         = false;
-    _gpsLossSeconds  = 0;
-    _lastGpsTime     = DateTime.now();
-    _distanceM       = null;
-    _bearingDeg      = null;
-    _startGpsLossTimer();
+    _prevGpsOnLock = _store.read<bool>(_kPrevGps) ?? true;
+    _active = true;
+    _level = AnchorAlarmLevel.idle;
+    _silenced = false; _hasFix = false;
+    _gpsLossSeconds = 0; _distanceM = null; _bearingDeg = null;
     return true;
   }
 
-  /// Called by home_screen on every GPS position update.
-  void onPositionUpdate(double lat, double lon) {
-    if (!_active) return;
-    _lastGpsTime    = DateTime.now();
-    _gpsLossSeconds = 0;
-    _gpsLost        = false;
+  // ── Native bridge ─────────────────────────────────────────────────────────────
 
-    if (_lat == null || _lon == null) return;
-    _distanceM  = haversineKm(lat, lon, _lat!, _lon!) * 1000.0;
-    _bearingDeg = bearing(lat, lon, _lat!, _lon!);
-    _recomputeLevel();
+  /// Poll the native authority for the current alarm snapshot.
+  /// Called once per second by the home screen while anchoring, and on resume.
+  Future<void> refresh() async {
+    if (!_active) return;
+    final Map? s;
+    try {
+      s = await _ch.invokeMethod<Map>('getAnchorSnapshot');
+    } catch (_) { return; }
+    if (s == null) return;
+
+    final lvl = (s['level'] as int? ?? 0).clamp(0, 2);
+    _level          = AnchorAlarmLevel.values[lvl];
+    _distanceM      = (s['distanceM'] as num?)?.toDouble();
+    _bearingDeg     = (s['bearingDeg'] as num?)?.toDouble();
+    _gpsLossSeconds = (s['gpsLossSeconds'] as int?) ?? 0;
+    _silenced       = (s['silenced'] as bool?) ?? false;
+    _hasFix         = (s['hasFix'] as bool?) ?? false;
     onStateChanged?.call();
   }
 
-  /// Silence audio/vibration/flash for this alarm cycle.
-  /// The alarm LEVEL (visual) persists until the anchor is lifted or the boat
-  /// returns inside the safe zone.
-  /// Called when battery drops to 10 % while anchoring.
-  void triggerBatteryWarning() {
+  /// Forward a (reliable, fused) foreground GPS fix to the native authority so
+  /// the GPS-loss timer is reset by the most reliable source available.
+  void forwardPosition(double lat, double lon) {
     if (!_active) return;
-    if (_level.index < AnchorAlarmLevel.warning.index) {
-      _level = AnchorAlarmLevel.warning;
-      _applyNativeLevel();
-      onStateChanged?.call();
-    }
-  }
-
-  /// Called when battery drops to 5 % while anchoring.
-  void triggerBatteryAlarm() {
-    if (!_active) return;
-    if (_level != AnchorAlarmLevel.alarm) {
-      _unsilence();
-      _level = AnchorAlarmLevel.alarm;
-      _applyNativeLevel();
-      onStateChanged?.call();
-    }
+    _ch.invokeMethod('forwardPosition', {'lat': lat, 'lon': lon}).catchError((_) {});
   }
 
   void silenceAlarm() {
     _silenced = true;
-    _stopNative();
+    _ch.invokeMethod('silenceAnchor').catchError((_) {});
     onStateChanged?.call();
   }
 
-  /// Unsilence: used when alarm level escalates again.
-  void _unsilence() => _silenced = false;
-
-  void updateRadius(double r) {
-    _radiusM = r;
-    if (_active) _recomputeLevel();
+  void escalateBattery(int floor) {
+    if (!_active) return;
+    _ch.invokeMethod('escalateBattery', {'floor': floor}).catchError((_) {});
   }
 
-  void updateWarningFraction(double f) {
-    _warningFraction = f;
-    if (_active) _recomputeLevel();
+  // ── Persistence helpers ───────────────────────────────────────────────────────
+
+  void _persist() {
+    _store.write(_kActive, true);
+    _store.write(_kLat, _lat);
+    _store.write(_kLon, _lon);
+    _store.write(_kRadius, _radiusM);
+    _store.write(_kWarnFrac, _warningFraction);
+    _store.write(_kPrevGps, _prevGpsOnLock);
   }
 
-  // ── Internal ─────────────────────────────────────────────────────────────────
-
-  void _recomputeLevel() {
-    final d = _distanceM;
-    if (d == null) return;
-
-    AnchorAlarmLevel position =
-        d >= _radiusM         ? AnchorAlarmLevel.alarm
-      : d >= warningRadiusM   ? AnchorAlarmLevel.warning
-                              : AnchorAlarmLevel.idle;
-
-    AnchorAlarmLevel gpsLoss =
-        _gpsLossSeconds >= 180 ? AnchorAlarmLevel.alarm
-      : _gpsLossSeconds >= 60  ? AnchorAlarmLevel.warning
-                               : AnchorAlarmLevel.idle;
-
-    // Highest level wins.
-    final newLevel = _max(position, gpsLoss);
-
-    if (newLevel.index > _level.index) {
-      // Escalation: unsilence so the new level can sound.
-      _unsilence();
-    }
-
-    if (newLevel != _level) {
-      _level = newLevel;
-      _applyNativeLevel();
+  void _clearPersisted() {
+    for (final k in [_kActive, _kLat, _kLon, _kRadius, _kWarnFrac, _kPrevGps]) {
+      _store.remove(k);
     }
   }
-
-  void _applyNativeLevel() {
-    if (_silenced) return;
-    switch (_level) {
-      case AnchorAlarmLevel.idle:    _stopNative();
-      case AnchorAlarmLevel.warning: _ch.invokeMethod('startWarning').catchError((_) {});
-      case AnchorAlarmLevel.alarm:   _ch.invokeMethod('startAlarm').catchError((_) {});
-    }
-  }
-
-  void _stopNative() => _ch.invokeMethod('stopAlarm').catchError((_) {});
-
-  void _startGpsLossTimer() {
-    _gpsLossTimer?.cancel();
-    _gpsLossTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (!_active) return;
-      final last = _lastGpsTime;
-      if (last == null) return;
-      _gpsLossSeconds = DateTime.now().difference(last).inSeconds;
-      _gpsLost        = _gpsLossSeconds >= 10; // small grace period for GNSS hiccups
-      _recomputeLevel();
-      onStateChanged?.call();
-    });
-  }
-
-  static AnchorAlarmLevel _max(AnchorAlarmLevel a, AnchorAlarmLevel b) =>
-      a.index >= b.index ? a : b;
 }
