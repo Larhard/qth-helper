@@ -124,6 +124,32 @@ class _HomeScreenState extends State<HomeScreen>
   // Runs only while alarm is active — zero overhead otherwise.
   late final AnimationController _strobeCtrl;
 
+  // ── Anchor restore after kill ─────────────────────────────────────────────
+  // Called post-frame when loadFromStorage() found a persisted anchor.
+  // Restarts GPS lock, background service, and GPS stream — all idempotent.
+  Future<void> _restoreAnchor() async {
+    if (!mounted || !AnchorService.instance.isActive) return;
+    final svc = AnchorService.instance;
+    if (!_gpsOnLock) {
+      setState(() => _gpsOnLock = true);
+      GetStorage().write('gps_on_lock', true);
+      _enableLiveModeWithPermission();
+    }
+    _anchorAlarmChannel.invokeMethod('startAnchorService', {
+      'lat': svc.anchorLat, 'lon': svc.anchorLon,
+      'radius': svc.radiusM, 'warnFrac': svc.warningFraction,
+    }).catchError((_) {});
+    if (_gpsOnLock) _startPositionStreamBackground(); else _startPositionStream();
+    setState(() {});
+    _showSettingSnack(
+        '⚓ Anchor alarm restored (radius ${svc.radiusM.round()} m). Background service active.');
+  }
+
+  // Battery monitoring while anchoring.
+  // Levels: 0=none, 1=20% (snackbar), 2=10% (warning alarm), 3=5% (full alarm).
+  int _batteryWarningLevel = 0;
+  int _batteryCheckTick    = 0;
+
   // ── Day / Night mode ──────────────────────────────────────────────────────
   // Day  : full-contrast palette — readable in direct sunlight.
   // Night: red-only palette — preserves rhodopsin (night-vision accommodation)
@@ -291,6 +317,10 @@ class _HomeScreenState extends State<HomeScreen>
       duration: const Duration(milliseconds: 700),
     );
     AnchorService.instance.onStateChanged = _onAnchorStateChanged;
+    // Restore anchor if it was active before the app was killed.
+    if (AnchorService.instance.loadFromStorage()) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _restoreAnchor());
+    }
     _staleTimer = Timer.periodic(const Duration(seconds: 1), _onStaleTick);
     _init();
     // Check for a GPX file that was opened to launch the app (cold start).
@@ -369,11 +399,21 @@ class _HomeScreenState extends State<HomeScreen>
     // Conditional rebuild: only when the stale counter actually changes.
     if (sec != _gpsStaleSeconds) setState(() => _gpsStaleSeconds = sec);
 
-    // GPS keep-alive while anchoring: Android GPS receivers can stop delivering
-    // updates when the device is stationary (chipset power-saving).  Requesting
-    // a fresh single-fix every 20 s wakes the receiver without continuous drain.
+    // GPS keep-alive while anchoring.
     if (AnchorService.instance.isActive && sec > 0 && sec % 20 == 0) {
       _requestImmediateGpsFix();
+    }
+
+    // Battery monitoring while anchoring — check every 30 s.
+    // When not anchoring, _batteryCheckTick is not incremented (zero overhead).
+    if (AnchorService.instance.isActive) {
+      _batteryCheckTick++;
+      if (_batteryCheckTick >= 30) {
+        _batteryCheckTick = 0;
+        _checkAnchorBattery();
+      }
+    } else if (_batteryWarningLevel != 0) {
+      _batteryWarningLevel = 0; // reset when anchor is lifted
     }
   }
 
@@ -474,10 +514,17 @@ class _HomeScreenState extends State<HomeScreen>
 
   void _startPositionStream() {
     _posSub?.cancel();
+    final anchoring = AnchorService.instance.isActive;
+    // When anchoring: distanceFilter=0 + intervalDuration=3 s forces GPS updates
+    // even when stationary — prevents false "GPS lost" anchor alarms.
+    // When not anchoring: standard settings preserve battery.
     _posSub = Geolocator.getPositionStream(
-      locationSettings: const LocationSettings(
+      locationSettings: AndroidSettings(
         accuracy: LocationAccuracy.high,
-        distanceFilter: 2,
+        distanceFilter: anchoring ? 0 : 2,
+        intervalDuration: anchoring
+            ? const Duration(seconds: 3)
+            : const Duration(seconds: 10),
       ),
     ).listen(_onPositionUpdate, onError: (_) {});
   }
@@ -490,10 +537,14 @@ class _HomeScreenState extends State<HomeScreen>
   // type are exempt from ACCESS_BACKGROUND_LOCATION.
   void _startPositionStreamBackground() {
     _posSub?.cancel();
+    final anchoring = AnchorService.instance.isActive;
     _posSub = Geolocator.getPositionStream(
       locationSettings: AndroidSettings(
         accuracy: LocationAccuracy.high,
-        distanceFilter: 2,
+        distanceFilter: anchoring ? 0 : 2,
+        intervalDuration: anchoring
+            ? const Duration(seconds: 3)
+            : const Duration(seconds: 10),
         foregroundNotificationConfig: const ForegroundNotificationConfig(
           notificationTitle: 'QTH Helper',
           notificationText: 'GPS tracking active',
@@ -833,6 +884,49 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   // ── Anchor alarm ─────────────────────────────────────────────────────────
+  // ── Battery monitoring while anchoring ───────────────────────────────────
+  // Runs only when the anchor is deployed; zero overhead otherwise.
+  //   20 % → one-time snackbar
+  //   10 % → warning alarm trigger + repeated snackbar
+  //    5 % → full alarm trigger
+  static const _anchorAlarmChannel = MethodChannel('qth_helper/anchor_alarm');
+
+  Future<void> _checkAnchorBattery() async {
+    if (!mounted || !AnchorService.instance.isActive) return;
+    double pct;
+    try {
+      pct = await _anchorAlarmChannel.invokeMethod<double>('getBatteryLevel') ?? -1;
+    } catch (_) { return; }
+    if (pct < 0) return;
+
+    final newLevel = pct <= 5 ? 3 : pct <= 10 ? 2 : pct <= 20 ? 1 : 0;
+    if (newLevel <= _batteryWarningLevel) return; // no escalation needed
+
+    _batteryWarningLevel = newLevel;
+    final bg  = _dayMode ? kDSnackBg : kNBg;
+    final fg  = _dayMode ? kDFg1     : kN2;
+    switch (newLevel) {
+      case 1:
+        _showSnack('Battery at ${pct.round()} % — consider charging while anchored.',
+            duration: const Duration(seconds: 6));
+      case 2:
+        _showSnack('⚠ Battery at ${pct.round()} % — anchor alarm may stop working soon!',
+            duration: const Duration(seconds: 8));
+        AnchorService.instance.triggerBatteryWarning();
+      case 3:
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('⚠ CRITICAL: Battery ${pct.round()} % — anchor alarm at risk!',
+              style: TextStyle(color: fg, fontSize: 13)),
+          backgroundColor: bg,
+          duration: const Duration(seconds: 12),
+          behavior: SnackBarBehavior.floating,
+          margin: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        ));
+        AnchorService.instance.triggerBatteryAlarm();
+    }
+  }
+
   void _onAnchorStateChanged() {
     if (!mounted) return;
     final lvl = AnchorService.instance.level;
@@ -855,6 +949,12 @@ class _HomeScreenState extends State<HomeScreen>
       lat: lat, lon: lon, radiusM: radiusM, warningFraction: warnFrac,
       prevGpsOnLock: prevGpsOnLock,
     );
+    // Start background service — survives app kill.
+    _anchorAlarmChannel.invokeMethod('startAnchorService', {
+      'lat': lat, 'lon': lon, 'radius': radiusM, 'warnFrac': warnFrac,
+    }).catchError((_) {});
+    // Restart GPS stream with distanceFilter = 0 + intervalDuration = 3 s.
+    if (_gpsOnLock) _startPositionStreamBackground(); else _startPositionStream();
     setState(() {});
     _showSettingSnack(
       'Anchor dropped · radius ${radiusM.round()} m · '
@@ -866,10 +966,14 @@ class _HomeScreenState extends State<HomeScreen>
   void _liftAnchor() {
     final prev = AnchorService.instance.prevGpsOnLock;
     AnchorService.instance.liftAnchor();
+    // Stop background service.
+    _anchorAlarmChannel.invokeMethod('stopAnchorService').catchError((_) {});
     if (!prev && _gpsOnLock) {
       setState(() => _gpsOnLock = false);
       GetStorage().write('gps_on_lock', false);
     }
+    // Restore normal stream settings (distanceFilter=2, intervalDuration=10s).
+    _startPositionStream();
     setState(() {});
     _showSettingSnack(
       'Anchor lifted. GPS-on-lock ${prev ? 'stays on' : 'turned off'}.',
@@ -1039,14 +1143,13 @@ class _HomeScreenState extends State<HomeScreen>
                     ),
                   ),
                   const SizedBox(height: 16),
-                  TextButton(
-                    onPressed: _liftAnchor,
-                    child: Text('Lift anchor',
-                        style: TextStyle(fontSize: 14,
-                            color: bright
-                                ? (_dayMode ? kDEmg.withValues(alpha: 0.7) : kN2)
-                                : (_dayMode ? Colors.white54 : kN3))),
-                  ),
+                  // SAFETY: lifting the anchor is only available from the
+                  // Waypoints screen.  This screen only allows silencing.
+                  Text('Open Waypoints screen to lift anchor.',
+                      style: TextStyle(fontSize: 12,
+                          color: bright
+                              ? (_dayMode ? kDEmg.withValues(alpha: 0.55) : kN3)
+                              : (_dayMode ? Colors.white38 : kN4))),
                 ],
               ),
             ),
@@ -1314,22 +1417,29 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
-  // Compact one-liner for city when anchoring (saves space).
+  // Compact city row when anchoring: arrow+dot-ring, name, bearing°, distance.
+  // Mirrors the nav waypoint compact row so both rows look consistent.
   Widget _citySectionCompact(NearestCity nc) {
     return GestureDetector(
       onTap: _toggleCityMode,
       onLongPress: () => _showCityDetails(nc),
       behavior: HitTestBehavior.opaque,
       child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 4),
+        padding: const EdgeInsets.symmetric(vertical: 3),
         child: Row(children: [
-          Icon(Icons.location_city, size: 14, color: _cityColor),
+          _arrowWithRelRing(nc.bearingDeg.toDouble(), _cityColor, 22),
           const SizedBox(width: 6),
           Expanded(child: Text(nc.city.name,
               overflow: TextOverflow.ellipsis,
-              style: TextStyle(fontSize: 13, color: _cityColor, fontWeight: FontWeight.w600))),
+              style: TextStyle(fontSize: 12, color: _cityColor, fontWeight: FontWeight.w600))),
+          Text('${nc.bearingDeg.round()}°',
+              style: TextStyle(fontSize: 12,
+                  color: _citySubColor,
+                  fontFeatures: const [FontFeature.tabularFigures()])),
+          const SizedBox(width: 6),
           Text(formatDistanceUnit(nc.distKm, _speedUnit),
-              style: TextStyle(fontSize: 13, color: _citySubColor)),
+              style: TextStyle(fontSize: 12, color: _cityColor,
+                  fontFeatures: const [FontFeature.tabularFigures()])),
         ]),
       ),
     );

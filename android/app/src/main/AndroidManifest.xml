@@ -87,6 +87,12 @@
             android:foregroundServiceType="location"
             android:exported="false"
             tools:node="merge" />
+
+        <!-- Anchor background monitor — survives app kill -->
+        <service
+            android:name=".AnchorMonitorService"
+            android:foregroundServiceType="location"
+            android:exported="false" />
     </application>
     <queries>
         <intent>

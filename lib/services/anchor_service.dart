@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/services.dart';
+import 'package:get_storage/get_storage.dart';
 import '../utils/geo_utils.dart';
 
 enum AnchorAlarmLevel { idle, warning, alarm }
@@ -17,7 +18,16 @@ class AnchorService {
   AnchorService._();
   static final instance = AnchorService._();
 
-  static const _ch = MethodChannel('qth_helper/anchor_alarm');
+  static const _ch    = MethodChannel('qth_helper/anchor_alarm');
+  static final _store = GetStorage();
+
+  // ── Persistence keys ────────────────────────────────────────────────────────
+  static const _kActive   = 'anchor_active';
+  static const _kLat      = 'anchor_lat';
+  static const _kLon      = 'anchor_lon';
+  static const _kRadius   = 'anchor_radius';
+  static const _kWarnFrac = 'anchor_warn_frac';
+  static const _kPrevGps  = 'anchor_prev_gps';
 
   // ── Anchor state ────────────────────────────────────────────────────────────
   double? _lat, _lon;
@@ -85,6 +95,7 @@ class AnchorService {
     _lastGpsTime     = DateTime.now();
     _distanceM       = 0.0;
     _bearingDeg      = 0.0;
+    _persist();
     _startGpsLossTimer();
     onStateChanged?.call();
   }
@@ -99,8 +110,50 @@ class AnchorService {
     _gpsLost        = false;
     _gpsLossTimer?.cancel();
     _gpsLossTimer   = null;
+    _clearPersisted();
     _stopNative();
     onStateChanged?.call();
+  }
+
+  // ── Persistence ──────────────────────────────────────────────────────────────
+
+  void _persist() {
+    _store.write(_kActive,   true);
+    _store.write(_kLat,      _lat);
+    _store.write(_kLon,      _lon);
+    _store.write(_kRadius,   _radiusM);
+    _store.write(_kWarnFrac, _warningFraction);
+    _store.write(_kPrevGps,  _prevGpsOnLock);
+  }
+
+  void _clearPersisted() {
+    _store.remove(_kActive);
+    _store.remove(_kLat);
+    _store.remove(_kLon);
+    _store.remove(_kRadius);
+    _store.remove(_kWarnFrac);
+    _store.remove(_kPrevGps);
+  }
+
+  /// Restore anchor state from storage after the app was killed.
+  /// Returns true if an active anchor was found and restored.
+  bool loadFromStorage() {
+    if (!(_store.read<bool>(_kActive) ?? false)) return false;
+    _lat             = _store.read<double>(_kLat);
+    _lon             = _store.read<double>(_kLon);
+    _radiusM         = _store.read<double>(_kRadius)   ?? 50.0;
+    _warningFraction = _store.read<double>(_kWarnFrac) ?? 0.80;
+    _prevGpsOnLock   = _store.read<bool>(_kPrevGps)   ?? true;
+    _active          = true;
+    _level           = AnchorAlarmLevel.idle;
+    _silenced        = false;
+    _gpsLost         = false;
+    _gpsLossSeconds  = 0;
+    _lastGpsTime     = DateTime.now();
+    _distanceM       = null;
+    _bearingDeg      = null;
+    _startGpsLossTimer();
+    return true;
   }
 
   /// Called by home_screen on every GPS position update.
@@ -120,6 +173,27 @@ class AnchorService {
   /// Silence audio/vibration/flash for this alarm cycle.
   /// The alarm LEVEL (visual) persists until the anchor is lifted or the boat
   /// returns inside the safe zone.
+  /// Called when battery drops to 10 % while anchoring.
+  void triggerBatteryWarning() {
+    if (!_active) return;
+    if (_level.index < AnchorAlarmLevel.warning.index) {
+      _level = AnchorAlarmLevel.warning;
+      _applyNativeLevel();
+      onStateChanged?.call();
+    }
+  }
+
+  /// Called when battery drops to 5 % while anchoring.
+  void triggerBatteryAlarm() {
+    if (!_active) return;
+    if (_level != AnchorAlarmLevel.alarm) {
+      _unsilence();
+      _level = AnchorAlarmLevel.alarm;
+      _applyNativeLevel();
+      onStateChanged?.call();
+    }
+  }
+
   void silenceAlarm() {
     _silenced = true;
     _stopNative();

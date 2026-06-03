@@ -270,14 +270,21 @@ class MainActivity : FlutterActivity(), SensorEventListener {
             .setMethodCallHandler { call, result ->
                 when (call.method) {
                     "pickTextFile" -> {
-                        // Open system file picker — no MIME filter so all files
-                        // are visible; content is validated on the Dart side.
+                        // Filter to GPX/XML MIME types — prevents .apk, images, etc.
+                        // from cluttering the picker.  Content is still validated on
+                        // the Dart side via XmlDocument.parse().
                         filePickerResult = result
                         @Suppress("DEPRECATION")
                         startActivityForResult(
                             Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
                                 addCategory(Intent.CATEGORY_OPENABLE)
                                 type = "*/*"
+                                putExtra(Intent.EXTRA_MIME_TYPES, arrayOf(
+                                    "application/gpx+xml",
+                                    "application/xml",
+                                    "text/xml",
+                                    "text/plain",   // some managers assign this to .gpx
+                                ))
                             },
                             REQUEST_PICK_FILE
                         )
@@ -296,10 +303,38 @@ class MainActivity : FlutterActivity(), SensorEventListener {
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "qth_helper/anchor_alarm")
             .setMethodCallHandler { call, result ->
                 when (call.method) {
-                    "startWarning" -> { anchorAlarm.startWarning(); result.success(null) }
-                    "startAlarm"   -> { anchorAlarm.startAlarm();   result.success(null) }
-                    "stopAlarm"    -> { anchorAlarm.stop();          result.success(null) }
-                    else           -> result.notImplemented()
+                    "startWarning"    -> { anchorAlarm.startWarning(); result.success(null) }
+                    "startAlarm"      -> { anchorAlarm.startAlarm();   result.success(null) }
+                    "stopAlarm"       -> { anchorAlarm.stop();          result.success(null) }
+                    "testAlarm"       -> { anchorAlarm.test();          result.success(null) }
+                    "startAnchorService" -> {
+                        val lat  = call.argument<Double>("lat")  ?: 0.0
+                        val lon  = call.argument<Double>("lon")  ?: 0.0
+                        val r    = call.argument<Double>("radius")   ?: 50.0
+                        val wf   = call.argument<Double>("warnFrac") ?: 0.80
+                        val svc  = Intent(this, AnchorMonitorService::class.java).apply {
+                            action = AnchorMonitorService.ACTION_START
+                            putExtra("lat", lat); putExtra("lon", lon)
+                            putExtra("radius", r); putExtra("warnFrac", wf)
+                        }
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+                            startForegroundService(svc) else startService(svc)
+                        result.success(null)
+                    }
+                    "stopAnchorService" -> {
+                        startService(Intent(this, AnchorMonitorService::class.java).apply {
+                            action = AnchorMonitorService.ACTION_STOP
+                        })
+                        result.success(null)
+                    }
+                    "getBatteryLevel" -> {
+                        val intent = registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+                        val level  = intent?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
+                        val scale  = intent?.getIntExtra(BatteryManager.EXTRA_SCALE,  -1) ?: -1
+                        val pct    = if (level >= 0 && scale > 0) level * 100.0 / scale else -1.0
+                        result.success(pct)
+                    }
+                    else -> result.notImplemented()
                 }
             }
     }

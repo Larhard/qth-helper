@@ -108,6 +108,22 @@ class AnchorAlarmManager(private val ctx: Context) {
         handler.postDelayed(flashRunnable, 100L)
     }
 
+    /** Play a single quiet test sequence (20 % volume, 3 s, then auto-stop). */
+    fun test() {
+        stop()
+        mode = Mode.ALARM // prevents immediate re-entry
+        prepareAudio(forTest = true)
+        try {
+            val pcm = alarmBuffer()
+            val track = createLoopingTrack(pcm, volumeScale = 0.20f)
+            track.write(pcm, 0, pcm.size)
+            track.setLoopPoints(0, pcm.size, 3) // loop 3 times ≈ 6 s then stop
+            track.play()
+            audioTrack = track
+        } catch (_: Exception) {}
+        handler.postDelayed({ if (mode == Mode.ALARM) stop() }, 6_000L)
+    }
+
     fun stop() {
         mode = Mode.NONE
         handler.removeCallbacks(warningRunnable)
@@ -140,21 +156,34 @@ class AnchorAlarmManager(private val ctx: Context) {
         return buf
     }
 
-    /** Warning tone: 523 Hz + 784 Hz perfect-fifth alternating 0.5 s each. */
-    private fun warningBuffer(): ShortArray = synthesise(2000, amplitude = 0.40) { t ->
-        val freq = if (t % 1.0 < 0.5) 523.0 else 784.0
-        sin(2 * PI * freq * t)
+    /**
+     * Warning: a single gentle "ping" at 880 Hz.
+     * 200 ms tone, then 800 ms silence — one quiet nudge per second of the buffer.
+     * Amplitude 28 % — wakes a light sleeper without alarming the whole crew.
+     */
+    private fun warningBuffer(): ShortArray = synthesise(1000, amplitude = 0.28) { t ->
+        val cycle = t % 1.0
+        if (cycle > 0.20) return@synthesise 0.0   // silence for rest of second
+        // Soft envelope: fade out over the 200 ms to avoid click
+        val env = 1.0 - (cycle / 0.20)
+        sin(2 * PI * 880.0 * t) * env
     }
 
     /**
-     * Alarm siren: sweeps 400–1 200 Hz at 1 Hz + second harmonic (90° phase offset).
-     * The interference between fundamental and 2× harmonic produces aggressive dissonance.
+     * Alarm siren: two simultaneous sweeping tones separated by a tritone (√2 ≈ 1.414).
+     * The tritone is the most dissonant interval in Western music ("diabolus in musica").
+     *   f1: sweeps 400 → 1 200 Hz at 0.5 Hz (smooth cosine ramp)
+     *   f2: f1 × √2 (tritone above) — creates severe beating/dissonance
+     * Both at full amplitude then hard-clipped for added harshness.
      */
-    private fun alarmBuffer(): ShortArray = synthesise(2000, amplitude = 0.90) { t ->
-        val freq = 400.0 + 800.0 * (sin(2 * PI * 0.5 * t) * 0.5 + 0.5) // 400→1200 Hz sweep
-        val f1 = sin(2 * PI * freq * t)
-        val f2 = sin(2 * PI * (freq * 2.0) * t + PI / 2) * 0.5  // 2nd harmonic, phase shifted
-        (f1 + f2) / 1.5
+    private fun alarmBuffer(): ShortArray = synthesise(2000, amplitude = 1.0) { t ->
+        // Smooth sweep using (1 - cos) ramp so the direction is always rising.
+        val sweep = 0.5 - 0.5 * Math.cos(2 * PI * 0.5 * t)
+        val freq  = 400.0 + 800.0 * sweep                    // 400 → 1200 Hz
+        val f1    = sin(2 * PI * freq * t)
+        val f2    = sin(2 * PI * freq * 1.4142 * t)           // tritone (√2 ratio)
+        // Sum both tones at equal amplitude; hard-clip to ±0.9 for added buzz.
+        (f1 + f2).coerceIn(-0.9, 0.9)
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -167,18 +196,22 @@ class AnchorAlarmManager(private val ctx: Context) {
             .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
             .build()
 
-    /** Set alarm stream to max volume and acquire audio focus before playing. */
-    private fun prepareAudio() {
-        // Override alarm stream volume to max — bypasses silent/mute mode.
-        audioManager.setStreamVolume(
-            AudioManager.STREAM_ALARM,
-            audioManager.getStreamMaxVolume(AudioManager.STREAM_ALARM),
-            0,
-        )
-        // Request exclusive audio focus — takes over from any other playing app.
+    /**
+     * Set alarm stream to max volume (or 20 % for test) and acquire exclusive
+     * audio focus before playing.
+     */
+    private fun prepareAudio(forTest: Boolean = false) {
+        val targetVol = if (forTest) {
+            (audioManager.getStreamMaxVolume(AudioManager.STREAM_ALARM) * 0.20).toInt().coerceAtLeast(1)
+        } else {
+            audioManager.getStreamMaxVolume(AudioManager.STREAM_ALARM)
+        }
+        audioManager.setStreamVolume(AudioManager.STREAM_ALARM, targetVol, 0)
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val req = android.media.AudioFocusRequest.Builder(
-                AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE
+                if (forTest) AudioManager.AUDIOFOCUS_GAIN_TRANSIENT
+                else AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE
             )
                 .setAudioAttributes(buildAudioAttributes())
                 .setAcceptsDelayedFocusGain(false)
@@ -192,7 +225,15 @@ class AnchorAlarmManager(private val ctx: Context) {
         }
     }
 
-    private fun createLoopingTrack(pcm: ShortArray): AudioTrack {
+    /**
+     * Force audio to the built-in speaker regardless of headphone/BT state.
+     * Safety requirement: the alarm must be audible in the physical space
+     * even if crew members are wearing headphones.
+     * An additional default-routed track is created for headphone users.
+     */
+    private var speakerTrack: AudioTrack? = null
+
+    private fun createLoopingTrack(pcm: ShortArray, volumeScale: Float = 1.0f): AudioTrack {
         val minBuf = AudioTrack.getMinBufferSize(
             sampleRate,
             AudioFormat.CHANNEL_OUT_MONO,
@@ -200,7 +241,7 @@ class AnchorAlarmManager(private val ctx: Context) {
         )
         val bufBytes = maxOf(minBuf, pcm.size * 2)
 
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+        val track = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             AudioTrack.Builder()
                 .setAudioAttributes(buildAudioAttributes())
                 .setAudioFormat(AudioFormat.Builder()
@@ -220,31 +261,54 @@ class AnchorAlarmManager(private val ctx: Context) {
                 bufBytes, AudioTrack.MODE_STATIC,
             )
         }
+        if (volumeScale < 1.0f) track.setVolume(volumeScale)
+        return track
     }
 
-    private fun playPcm(pcm: ShortArray) {
-        stopAudio()
-        prepareAudio()
-        try {
-            val track = createLoopingTrack(pcm)
-            track.write(pcm, 0, pcm.size)
-            track.setLoopPoints(0, pcm.size, -1) // -1 = infinite loop
-            track.play()
-            audioTrack = track
-        } catch (e: Exception) {
-            // Fallback: do nothing — visual + vibration still active
+    /** Route track to the built-in speaker regardless of headphone/BT routing. */
+    private fun forceToSpeaker(track: AudioTrack) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            try {
+                val spk = audioManager
+                    .getDevices(AudioManager.GET_DEVICES_OUTPUTS)
+                    .firstOrNull { it.type == android.media.AudioDeviceInfo.TYPE_BUILTIN_SPEAKER }
+                if (spk != null) track.setPreferredDevice(spk)
+            } catch (_: Exception) {}
         }
+    }
+
+    private fun playPcm(pcm: ShortArray, forTest: Boolean = false) {
+        stopAudio()
+        prepareAudio(forTest)
+        try {
+            // Primary track: routed to built-in speaker so alarm is always audible.
+            val primary = createLoopingTrack(pcm)
+            forceToSpeaker(primary)
+            primary.write(pcm, 0, pcm.size)
+            primary.setLoopPoints(0, pcm.size, -1)
+            primary.play()
+            audioTrack = primary
+
+            // Companion track: default routing (also plays through BT/headphones
+            // if connected) so wearers are also alerted.
+            if (!forTest) {
+                val companion = createLoopingTrack(pcm, volumeScale = 0.85f)
+                companion.write(pcm, 0, pcm.size)
+                companion.setLoopPoints(0, pcm.size, -1)
+                companion.play()
+                speakerTrack = companion
+            }
+        } catch (_: Exception) {}
     }
 
     private fun playWarningBeep() = playPcm(warningBuffer())
     private fun playAlarmSiren()  = playPcm(alarmBuffer())
 
     private fun stopAudio() {
-        try {
-            audioTrack?.stop()
-            audioTrack?.release()
-        } catch (_: Exception) {}
+        try { audioTrack?.stop();   audioTrack?.release()   } catch (_: Exception) {}
+        try { speakerTrack?.stop(); speakerTrack?.release() } catch (_: Exception) {}
         audioTrack = null
+        speakerTrack = null
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             audioFocusRequest?.let { audioManager.abandonAudioFocusRequest(it) }

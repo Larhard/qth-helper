@@ -597,7 +597,26 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
                 const Spacer(),
                 Text('95 %', style: TextStyle(fontSize: 10, color: _day ? kDFg4 : kN4)),
               ]),
-              const SizedBox(height: 24),
+              const SizedBox(height: 16),
+
+              // ── Test alarm ───────────────────────────────────────────────
+              // Plays the alarm at 20 % volume for ~6 s so the crew can verify
+              // the alarm will be audible before actually anchoring.
+              OutlinedButton.icon(
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: _day ? kDFg3 : kN3,
+                  side: BorderSide(color: _day ? kDBrd : kNDiv),
+                ),
+                icon: const Icon(Icons.volume_up_outlined, size: 16),
+                label: const Text('Test alarm (quiet)'),
+                onPressed: () {
+                  const ch = MethodChannel('qth_helper/anchor_alarm');
+                  ch.invokeMethod('testAlarm').catchError((_) {});
+                  _snack('Playing 6 s test alarm at 20 % volume.',
+                      duration: const Duration(seconds: 7));
+                },
+              ),
+              const SizedBox(height: 16),
 
               // ── Actions ─────────────────────────────────────────────────
               Row(children: [
