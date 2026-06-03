@@ -345,10 +345,11 @@ lib/
 │   ├── about_screen.dart        # Legal notices + open-source licences
 │   └── debug_screen.dart        # 4-tab sensor/GPS/heading/locator debug view
 ├── services/
-│   ├── anchor_service.dart      # Anchor state, radius checking, GPS-loss escalation
+│   ├── anchor_service.dart      # Anchor presenter: config + polled snapshot (see §7.1)
 │   ├── city_service.dart        # Spatial grid lookup (city and port datasets)
 │   ├── declination_service.dart # WMM magnetic declination via Android GeomagneticField
 │   ├── environment_service.dart # EventChannel wrapper for sensor stream
+│   ├── overlay_service.dart     # Floating-compass overlay controller (see §10)
 │   └── waypoint_service.dart    # MOB + nav waypoints; GPX import with dedup + undo
 └── utils/
     ├── anchor_math.dart         # Pure anchor alarm level logic (unit-tested spec)
@@ -363,8 +364,11 @@ lib/
 android/app/src/main/kotlin/.../
     ├── MainActivity.kt          # Flutter channels (thin bridges)
     ├── AnchorController.kt      # Single authority: level logic + state (object)
-    ├── AnchorAlarmManager.kt    # Process-singleton hardware driver
-    └── AnchorMonitorService.kt  # Foreground service: GPS feed + notification
+    ├── AnchorAlarmManager.kt    # Process-singleton hardware driver (MODE_STREAM audio)
+    ├── AnchorMonitorService.kt  # Foreground service: GPS feed + notification
+    ├── BootReceiver.kt          # Restarts anchor monitor after reboot
+    ├── OverlayService.kt        # Foreground service hosting the floating overlay
+    └── OverlayView.kt           # Native custom-View compass for the overlay
 ```
 
 ### Module boundaries
@@ -424,9 +428,16 @@ Implementation in `AnchorAlarmManager`:
 
 ### 7.3 Alarm audio design
 
+- **Playback engine: `AudioTrack` in `MODE_STREAM`, fed by a dedicated
+  max-priority blocking writer thread.** This is mandatory — `MODE_STATIC` +
+  `setLoopPoints` glitches and "breaks up" on many devices (the symptom field
+  testing reported, present even during the test tone with a single track).
+  The blocking `write()` paces production and keeps the hardware buffer full, so
+  playback is seamless. One writer thread per track; `stop()` clears a `feeding`
+  flag and stops the track to unblock the thread, then joins it.
 - **Warning:** a single soft 880 Hz ping (250 ms, faded), played ONCE every 8 s —
   a gentle one-shot nudge, not a continuous tone. Audible at volume 0.
-- **Alarm:** continuous looping siren — two tones a **tritone (√2 ≈ 1.414) apart**
+- **Alarm:** continuous siren — two tones a **tritone (√2 ≈ 1.414) apart**
   sweeping 400→1200 Hz, summed and hard-clipped. The tritone is the most dissonant
   Western interval; the result is deliberately harsh. Max volume, continuous.
 - **Test:** the same alarm timbre at 20 % volume from all outputs, toggled on/off
@@ -490,7 +501,37 @@ Any threshold change requires editing **both**. The Dart copy is covered by
 
 ---
 
-## 9. Version history note
+## 9. Floating compass overlay
+
+A small always-on-top compass shown over other apps (maps, messaging) so heading
+and the nearest city / anchor status stay glanceable without switching back.
+
+**Architecture (native, no second Flutter engine):**
+- `OverlayView` (Kotlin custom `View`) draws a compact compass + numeric heading
+  + two info lines. It is rendered natively — a second `FlutterEngine` would cost
+  ~30–50 MB and significant battery, which violates §5.5.
+- `OverlayService` (foreground service, `specialUse` type) hosts the window via
+  `WindowManager` + `TYPE_APPLICATION_OVERLAY`, draggable, tap-to-open-app. The
+  FGS keeps the process (and the data-pushing Flutter engine) alive in background.
+- `OverlayController` (Dart) handles the `SYSTEM_ALERT_WINDOW` permission flow,
+  persists the user's enable intent, and pushes one data frame per update.
+
+**Rules:**
+- **Colours are pushed as ARGB ints from Dart** — the overlay never hard-codes a
+  semantic colour, so the §4 palette (incl. the pure-red night rule) stays the
+  single source of truth.
+- **Shown only in the background.** The home screen shows it on `paused` and hides
+  it on `resumed` — never drawn on top of the full dashboard.
+- **Opt-in and battery-bounded.** Sensors are kept alive in the background ONLY
+  when the overlay is enabled, an anchor is active, or GPS-on-lock is on
+  (`keepAlive` in the lifecycle handler). When none apply, the baseline §5.5
+  budget is unchanged (compass paused, GPS cancelled, timer stopped).
+- Content adapts: anchor status when anchoring, else nearest city name + bearing
+  + distance. Heading honours the in-app arrow/wind-rose mode.
+
+---
+
+## 10. Version history note
 
 The app started as a proof-of-concept GPS heading display and grew iteratively
 through field testing into a full maritime/radio/hiking dashboard. The architecture

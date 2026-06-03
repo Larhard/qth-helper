@@ -18,6 +18,7 @@ import '../utils/mgrs_utils.dart';
 import '../utils/units.dart';
 import '../utils/gpx_utils.dart';
 import '../services/anchor_service.dart';
+import '../services/overlay_service.dart';
 import '../widgets/arrow_widget.dart';
 import 'debug_screen.dart';
 import 'waypoints_screen.dart';
@@ -348,25 +349,33 @@ class _HomeScreenState extends State<HomeScreen>
     if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached) {
       _screenOn = false;
-      // Screen off → release every continuously-running power draw:
-      //  • compass sensor (paused)
-      //  • GNSS receiver (stream cancelled — the big saving on long hikes)
-      //  • 1 Hz stale timer (cancelled — no point waking the CPU for hidden UI)
-      _compassSub?.pause();
-      _staleTimer?.cancel();
-      _staleTimer = null;
       _cancelClear();
-      if (_gpsOnLock) {
-        // Switch to a foreground-service-backed stream. Android throttles GPS
-        // for background apps without a foreground service (API 26+); keeping
-        // the plain stream subscription alive does not prevent this.
-        _startPositionStreamBackground();
+
+      // Show the floating overlay while the user is in another app.
+      if (OverlayController.instance.enabled) OverlayController.instance.show();
+
+      // Keep sensors alive when there's a background consumer (GPS-on-lock,
+      // an active anchor, or the floating overlay).  Otherwise release them.
+      final keepAlive = _gpsOnLock ||
+          AnchorService.instance.isActive ||
+          OverlayController.instance.enabled;
+
+      if (keepAlive) {
+        // Compass + 1 Hz tick stay running so the overlay/anchor keep updating.
+        _staleTimer ??= Timer.periodic(const Duration(seconds: 1), _onStaleTick);
+        _startPositionStreamBackground(); // foreground-service backed GPS
       } else {
+        // Battery-saving default: release everything.
+        _compassSub?.pause();
+        _staleTimer?.cancel();
+        _staleTimer = null;
         _posSub?.cancel();
         _posSub = null;
       }
     } else if (state == AppLifecycleState.resumed) {
       _screenOn = true;
+      // Hide the overlay while the dashboard itself is in front.
+      if (OverlayController.instance.isShown) OverlayController.instance.hide();
       _compassSub?.resume();
       _checkPocketLockOnResume();
       _staleTimer ??= Timer.periodic(const Duration(seconds: 1), _onStaleTick);
@@ -407,6 +416,9 @@ class _HomeScreenState extends State<HomeScreen>
     final sec = DateTime.now().difference(_lastGpsFix).inSeconds;
     // Conditional rebuild: only when the stale counter actually changes.
     if (sec != _gpsStaleSeconds) setState(() => _gpsStaleSeconds = sec);
+
+    // Keep the floating overlay fresh (cheap; only when shown).
+    _pushOverlay();
 
     // Anchor-only work (zero overhead when not anchoring).
     if (AnchorService.instance.isActive) {
@@ -456,6 +468,8 @@ class _HomeScreenState extends State<HomeScreen>
       _compassHeading = corrected;
       _compassNotifier.value = corrected;
       if (!_compassReceived) _compassReceived = true;
+      // Feed the floating overlay at the compass rate (~10 Hz) when shown.
+      if (OverlayController.instance.isShown) _pushOverlay();
       // Only rebuild when the heading has changed enough to be visible.
       // Suppresses ~10 Hz redraws when stationary (compass jitter ±0.5°).
       if (!_usingGps && mounted) {
@@ -937,6 +951,52 @@ class _HomeScreenState extends State<HomeScreen>
         ));
         AnchorService.instance.escalateBattery(2);
     }
+  }
+
+  // ── Floating overlay data push ────────────────────────────────────────────
+  // Builds one frame for the native compass overlay. No-op unless it's shown.
+  void _pushOverlay() {
+    if (!OverlayController.instance.isShown) return;
+    final anchoring = AnchorService.instance.isActive;
+    final windRose  = _headingArrowMode == HeadingArrowMode.windRose;
+    final secondary = _headingSourceMode == HeadingSourceMode.auto
+        ? _compassHeading
+        : (_track.bearing ?? _lastValidGpsHeading);
+
+    String line1, line2;
+    if (anchoring) {
+      final a = AnchorService.instance;
+      line1 = switch (a.level) {
+        AnchorAlarmLevel.alarm   => '⚓ ANCHOR ALARM',
+        AnchorAlarmLevel.warning => '⚓ Anchor warning',
+        AnchorAlarmLevel.idle    => '⚓ Anchor OK',
+      };
+      line2 = a.gpsLost
+          ? 'GPS lost ${a.gpsLossSeconds}s'
+          : '${(a.distanceM ?? 0).round()} m / ${a.radiusM.round()} m';
+    } else {
+      final nc = _nearestCity;
+      line1 = nc?.city.name ?? '—';
+      line2 = nc != null
+          ? '${nc.bearingDeg.round()}°  ${formatDistanceUnit(nc.distKm, _speedUnit)}'
+          : '';
+    }
+
+    OverlayController.instance.update(
+      heading: _heading,
+      headingValid: _intendedSourceHasData,
+      windRose: windRose,
+      secondaryBearing: secondary,
+      primaryColor: _headingColor,
+      secondaryColor: _secondaryHeadingColor,
+      northColor: _dayMode ? kDEmg : kN0,
+      line1: line1,
+      line2: line2,
+      bgColor: (_dayMode ? Colors.black : kNBg).withValues(alpha: 0.88),
+      textColor: _dayMode ? kDFg0 : kN1,
+      subColor: anchoring ? _anchorLevelColor(AnchorService.instance.level)
+                          : (_dayMode ? kDFg2 : kN2),
+    );
   }
 
   void _onAnchorStateChanged() {

@@ -68,6 +68,10 @@ class AnchorAlarmManager private constructor(private val appCtx: Context) {
     private var audioFocusRequest: android.media.AudioFocusRequest? = null
     // Keep one-shot warning tracks alive until they finish, then release.
     private val oneShotTracks = mutableListOf<AudioTrack>()
+    // Continuous playback uses MODE_STREAM fed by dedicated writer threads —
+    // MODE_STATIC + setLoopPoints glitches/breaks up on many devices.
+    @Volatile private var feeding = false
+    private val feederThreads = mutableListOf<Thread>()
 
     // Alarm focus changes are ignored — an alarm must keep sounding regardless.
     private val focusListener = AudioManager.OnAudioFocusChangeListener { /* no-op */ }
@@ -238,32 +242,6 @@ class AnchorAlarmManager private constructor(private val appCtx: Context) {
         } catch (_: Exception) { false }
     }
 
-    private fun newTrack(pcm: ShortArray, volumeScale: Float): AudioTrack {
-        val minBuf = AudioTrack.getMinBufferSize(
-            sampleRate, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT)
-        val bufBytes = maxOf(minBuf, pcm.size * 2)
-        val track = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            AudioTrack.Builder()
-                .setAudioAttributes(buildAudioAttributes())
-                .setAudioFormat(AudioFormat.Builder()
-                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                    .setSampleRate(sampleRate)
-                    .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
-                    .build())
-                .setBufferSizeInBytes(bufBytes)
-                .setTransferMode(AudioTrack.MODE_STATIC)
-                .setSessionId(AudioManager.AUDIO_SESSION_ID_GENERATE)
-                .build()
-        } else {
-            @Suppress("DEPRECATION")
-            AudioTrack(AudioManager.STREAM_ALARM, sampleRate,
-                AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT,
-                bufBytes, AudioTrack.MODE_STATIC)
-        }
-        if (volumeScale < 1.0f) track.setVolume(volumeScale)
-        return track
-    }
-
     private fun pinToSpeaker(track: AudioTrack) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             try {
@@ -274,52 +252,105 @@ class AnchorAlarmManager private constructor(private val appCtx: Context) {
         }
     }
 
-    /** Continuous looping playback (alarm / test). */
+    /** Create a MODE_STREAM track with a generous buffer (~0.5 s of headroom). */
+    private fun newStreamTrack(volumeScale: Float): AudioTrack {
+        val minBuf = AudioTrack.getMinBufferSize(
+            sampleRate, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT)
+        val bufBytes = maxOf(minBuf, sampleRate) // ~0.5 s (sampleRate shorts = sampleRate*2 bytes)
+        val track = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            AudioTrack.Builder()
+                .setAudioAttributes(buildAudioAttributes())
+                .setAudioFormat(AudioFormat.Builder()
+                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                    .setSampleRate(sampleRate)
+                    .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                    .build())
+                .setBufferSizeInBytes(bufBytes)
+                .setTransferMode(AudioTrack.MODE_STREAM)
+                .build()
+        } else {
+            @Suppress("DEPRECATION")
+            AudioTrack(AudioManager.STREAM_ALARM, sampleRate,
+                AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT,
+                bufBytes, AudioTrack.MODE_STREAM)
+        }
+        if (volumeScale < 1.0f) track.setVolume(volumeScale)
+        return track
+    }
+
+    /**
+     * Continuous looping playback (alarm / test) via MODE_STREAM + a high-priority
+     * blocking writer thread.  The blocking write paces production automatically and
+     * keeps the hardware buffer always full — no underruns, no MODE_STATIC loop glitch.
+     */
     private fun playLooping(pcm: ShortArray, maxVolume: Boolean, volumeScale: Float = 1.0f) {
         stopAudio()
         if (maxVolume) forceMaxAlarmVolume()
         requestFocus(exclusive = maxVolume)
+        feeding = true
         try {
-            val speaker = newTrack(pcm, volumeScale)
+            val speaker = newStreamTrack(volumeScale)
             pinToSpeaker(speaker)
-            speaker.write(pcm, 0, pcm.size)
-            speaker.setLoopPoints(0, pcm.size, -1)
             speaker.play()
             loopTrack = speaker
+            feederThreads.add(startFeeder(speaker, pcm))
 
-            // Companion on the default route only when headphones/BT are present
-            // — avoids speaker comb-filtering when no external output exists.
+            // Companion on the default route only when headphones/BT are present.
             if (hasExternalOutput()) {
-                val ext = newTrack(pcm, volumeScale)
-                ext.write(pcm, 0, pcm.size)
-                ext.setLoopPoints(0, pcm.size, -1)
+                val ext = newStreamTrack(volumeScale)
                 ext.play()
                 loopCompanion = ext
+                feederThreads.add(startFeeder(ext, pcm))
             }
         } catch (_: Exception) {}
     }
 
-    /** One-shot playback (warning ping); auto-released after it finishes. */
+    /** Feeds [pcm] to [track] repeatedly until [feeding] is cleared. */
+    private fun startFeeder(track: AudioTrack, pcm: ShortArray): Thread {
+        val t = Thread {
+            try {
+                while (feeding) {
+                    var off = 0
+                    while (off < pcm.size && feeding) {
+                        val n = track.write(pcm, off, pcm.size - off) // blocking
+                        if (n < 0) return@Thread       // unrecoverable error
+                        if (n == 0) break               // track stopped → recheck feeding
+                        off += n
+                    }
+                }
+            } catch (_: Exception) {}
+        }
+        t.isDaemon = true
+        t.priority = Thread.MAX_PRIORITY
+        t.start()
+        return t
+    }
+
+    /** One-shot playback (warning ping) — MODE_STREAM, one buffer, auto-released. */
     private fun playOnce(pcm: ShortArray) {
         forceMaxAlarmVolume()
         requestFocus(exclusive = false)
-        val durationMs = (pcm.size.toLong() * 1000L / sampleRate) + 200L
-        try {
-            val speaker = newTrack(pcm, 1.0f)
-            pinToSpeaker(speaker)
-            speaker.write(pcm, 0, pcm.size)
-            speaker.play()
-            oneShotTracks.add(speaker)
-            handler.postDelayed({ releaseOneShot(speaker) }, durationMs)
-
-            if (hasExternalOutput()) {
-                val ext = newTrack(pcm, 1.0f)
-                ext.write(pcm, 0, pcm.size)
+        val durationMs = (pcm.size.toLong() * 1000L / sampleRate) + 250L
+        fun fireOneShot() {
+            try {
+                val track = newStreamTrack(1.0f)
+                pinToSpeaker(track)
+                track.play()
+                track.write(pcm, 0, pcm.size)  // blocking; buffer plays out
+                oneShotTracks.add(track)
+                handler.postDelayed({ releaseOneShot(track) }, durationMs)
+            } catch (_: Exception) {}
+        }
+        fireOneShot()
+        if (hasExternalOutput()) {
+            try {
+                val ext = newStreamTrack(1.0f)
                 ext.play()
+                ext.write(pcm, 0, pcm.size)
                 oneShotTracks.add(ext)
                 handler.postDelayed({ releaseOneShot(ext) }, durationMs)
-            }
-        } catch (_: Exception) {}
+            } catch (_: Exception) {}
+        }
     }
 
     private fun releaseOneShot(track: AudioTrack) {
@@ -328,8 +359,14 @@ class AnchorAlarmManager private constructor(private val appCtx: Context) {
     }
 
     private fun stopAudio() {
-        try { loopTrack?.stop();     loopTrack?.release() }     catch (_: Exception) {}
-        try { loopCompanion?.stop(); loopCompanion?.release() } catch (_: Exception) {}
+        feeding = false
+        // Stopping a track unblocks any feeder thread parked in write().
+        try { loopTrack?.stop() }     catch (_: Exception) {}
+        try { loopCompanion?.stop() } catch (_: Exception) {}
+        for (t in feederThreads) { try { t.join(200) } catch (_: Exception) {} }
+        feederThreads.clear()
+        try { loopTrack?.release() }     catch (_: Exception) {}
+        try { loopCompanion?.release() } catch (_: Exception) {}
         loopTrack = null
         loopCompanion = null
         for (t in oneShotTracks.toList()) { try { t.stop(); t.release() } catch (_: Exception) {} }

@@ -7,6 +7,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import '../utils/gpx_utils.dart';
 import '../services/anchor_service.dart';
+import '../services/overlay_service.dart';
 import 'about_screen.dart';
 import '../models/waypoint.dart';
 import '../services/waypoint_service.dart';
@@ -84,6 +85,28 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
       margin: const EdgeInsets.fromLTRB(16, 0, 16, 8),
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
     ));
+  }
+
+  // ── Floating overlay toggle ───────────────────────────────────────────────
+  Future<void> _toggleOverlay() async {
+    final oc = OverlayController.instance;
+    if (oc.enabled) {
+      oc.enabled = false;
+      await oc.hide();
+      setState(() {});
+      _snack('Floating compass disabled.');
+      return;
+    }
+    if (!await oc.hasPermission()) {
+      await oc.requestPermission();
+      _snack('Grant "Display over other apps", then tap the overlay button again.',
+          duration: const Duration(seconds: 5));
+      return;
+    }
+    oc.enabled = true;
+    setState(() {});
+    _snack('Floating compass enabled — it appears when you switch to another app.',
+        duration: const Duration(seconds: 5));
   }
 
   // ── Multi-select delete ───────────────────────────────────────────────────
@@ -284,6 +307,18 @@ class _WaypointsScreenState extends State<WaypointsScreen> {
         icon: Icon(Icons.file_upload_outlined, color: _cTertiary),
         tooltip: 'Export all GPX',
         onPressed: _exportGpx,
+      ),
+      IconButton(
+        icon: Icon(
+          OverlayController.instance.enabled
+              ? Icons.picture_in_picture_alt
+              : Icons.picture_in_picture_alt_outlined,
+          color: OverlayController.instance.enabled
+              ? (_day ? kDPort : kN1)
+              : _cTertiary,
+        ),
+        tooltip: 'Floating compass overlay',
+        onPressed: _toggleOverlay,
       ),
       IconButton(
         icon: Icon(Icons.checklist_outlined, color: _cTertiary),

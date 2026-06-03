@@ -14,6 +14,8 @@ import android.hardware.SensorManager
 import android.hardware.camera2.CameraManager
 import android.location.GnssStatus
 import android.location.LocationManager
+import android.net.Uri
+import android.provider.Settings
 import android.media.AudioAttributes
 import android.media.AudioManager
 import android.media.ToneGenerator
@@ -351,6 +353,60 @@ class MainActivity : FlutterActivity(), SensorEventListener {
                         val scale  = intent?.getIntExtra(BatteryManager.EXTRA_SCALE,  -1) ?: -1
                         val pct    = if (level >= 0 && scale > 0) level * 100.0 / scale else -1.0
                         result.success(pct)
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+
+        // ── Floating overlay ─────────────────────────────────────────────────
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "qth_helper/overlay")
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "hasPermission" -> result.success(
+                        Build.VERSION.SDK_INT < Build.VERSION_CODES.M ||
+                            Settings.canDrawOverlays(this))
+                    "requestPermission" -> {
+                        try {
+                            startActivity(Intent(
+                                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                Uri.parse("package:$packageName")))
+                        } catch (_: Exception) {}
+                        result.success(null)
+                    }
+                    "isShown" -> result.success(OverlayService.isRunning)
+                    "show" -> {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
+                            !Settings.canDrawOverlays(this)) {
+                            result.success(false)
+                        } else {
+                            val i = Intent(this, OverlayService::class.java)
+                                .apply { action = OverlayService.ACTION_SHOW }
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+                                startForegroundService(i) else startService(i)
+                            result.success(true)
+                        }
+                    }
+                    "hide" -> {
+                        startService(Intent(this, OverlayService::class.java)
+                            .apply { action = OverlayService.ACTION_HIDE })
+                        result.success(null)
+                    }
+                    "update" -> {
+                        OverlayService.instance?.update(
+                            heading          = call.argument<Double>("heading") ?: 0.0,
+                            headingValid     = call.argument<Boolean>("headingValid") ?: true,
+                            windRose         = call.argument<Boolean>("windRose") ?: false,
+                            secondaryBearing = call.argument<Double>("secondaryBearing"),
+                            primaryColor     = (call.argument<Number>("primaryColor")   ?: 0).toLong(),
+                            secondaryColor   = (call.argument<Number>("secondaryColor") ?: 0).toLong(),
+                            northColor       = (call.argument<Number>("northColor")     ?: 0).toLong(),
+                            line1            = call.argument<String>("line1") ?: "",
+                            line2            = call.argument<String>("line2") ?: "",
+                            bgColor          = (call.argument<Number>("bgColor")   ?: 0).toLong(),
+                            textColor        = (call.argument<Number>("textColor") ?: 0).toLong(),
+                            subColor         = (call.argument<Number>("subColor")  ?: 0).toLong(),
+                        )
+                        result.success(null)
                     }
                     else -> result.notImplemented()
                 }
