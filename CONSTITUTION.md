@@ -112,25 +112,62 @@ colour before any track data exists, never silently using MAG.
 
 Both portrait and landscape orientations must be supported at both resolutions.
 
-### Layout rules
+### The no-scroll layout contract (CRITICAL)
 
-1. **Nothing cropped** — every visible widget must be fully within the safe area.
-   Long city/port names (e.g. "Akademicki Związek Sportowy Kraków") must never
-   clip; they shrink via `_fitFontSize()` instead.
-2. **MOB always at bottom** — in both orientations the MOB button or card is
-   pinned to the bottom of its column and never scrolled out of view.
-3. **Primary dashboard always fits without scrolling** — heading, speed,
-   coordinates, locator, time, and city are always simultaneously visible in
-   portrait mode on the smallest mandatory screen.
-4. **Anchor mode priority** — when anchoring, heading section + anchor card +
-   MOB are always fully visible. City collapses to a compact one-liner.
-   Nav waypoint shows as a compact bearing row.
-5. **Font hierarchy** — the largest text (heading degrees) is always largest.
-   Speed, coordinates, locator, time are secondary. Labels/metadata are tertiary.
-6. **Dynamic font sizing** — `_fitFontSize()` uses TextPainter measurement to
-   find the largest font that fits in `maxLines` lines. Never hard-clips text.
-7. **Landscape compact sizes** — all landscape card sizes are noticeably smaller
-   than portrait to fit within ~300 dp landscape height after safe area.
+The main dashboard **never scrolls and never overflows** — it must be fully
+glanceable while driving. This is guaranteed by a three-zone structure, used
+identically in portrait (vertical Column) and landscape (right column):
+
+```
+FIXED top     →  heading + coordinates   (always full size, always visible)
+ADAPTIVE mid  →  city + nav + anchor      (shrinks uniformly to fit leftover space)
+FIXED bottom  →  MOB                       (always full size, always reachable)
+```
+
+- The adaptive middle is wrapped by **`_adaptiveSecondary()`** —
+  `Expanded → LayoutBuilder → FittedBox(scaleDown) → SizedBox(width) → Column`.
+  It renders at natural size when there's room and **shrinks uniformly** (never
+  enlarges, never scrolls, never overlaps) when crowded. **Any widget added to
+  the middle automatically participates** in shrink-to-fit, so new sections
+  cannot break the layout.
+- **Only the secondary block shrinks.** Heading, coordinates and MOB keep their
+  full size in every scenario (product decision — those are the safety-critical,
+  glance-while-driving elements).
+
+### Rules
+
+1. **Nothing cropped, nothing scrolled, nothing overlapped** — for ANY content:
+   long 2-line city name + VHF + call sign + country + nav waypoint + anchor card
+   + MOB, in either orientation, on the smallest mandatory screen.
+2. **Fixed sections must fit the smallest viewport.** heading + coordinates + MOB
+   + dividers must sum to **less than the usable height of 360 × 800 dp portrait
+   and 800 × 360 dp landscape** so the adaptive middle always has ≥ 0 px. Adding
+   to a FIXED zone requires re-checking this budget; prefer adding to the middle.
+3. **All variable-width text degrades gracefully** — every name/label that can be
+   arbitrarily long uses `_fitFontSize()` (width + max-lines) AND/OR `Flexible`/
+   `Expanded` + `TextOverflow.ellipsis`. Never place an unconstrained `Text` in a
+   `Row`. (The middle's FittedBox is the height backstop; this is the width backstop.)
+4. **MOB always at the bottom**, fixed, in both orientations.
+5. **Anchor mode priority** — when anchoring, the city collapses to a compact
+   one-line row and the nav waypoint to a compact bearing row, leaving the anchor
+   card the most prominent secondary element.
+6. **Font hierarchy** — heading degrees largest; speed/coords/locator/time
+   secondary; labels/metadata tertiary.
+7. **Landscape compact sizes** — landscape card/font sizes are stepped down from
+   portrait so the left (heading+coords) and right (middle+MOB) columns each fit
+   the ~336 dp landscape height.
+
+### How to verify a layout change
+
+Before merging any change touching the dashboard, mentally (or in an emulator)
+run the **worst-case matrix** at 360 × 800 dp AND 800 × 360 dp:
+
+| City name | VHF/call sign | Nav waypoint | Anchor | MOB |
+|---|---|---|---|---|
+| 2-line long | both present | active (long name) | active | active |
+
+If everything is visible (middle may be visibly smaller) with no scroll bar and
+no overflow stripe, the change is safe.
 
 ---
 

@@ -1356,17 +1356,48 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
+  // ── Adaptive secondary block ──────────────────────────────────────────────
+  // Wraps the city / nav / anchor section so it ALWAYS fits the space left over
+  // by the fixed heading/coords/MOB, shrinking uniformly instead of scrolling or
+  // overlapping. This is THE mechanism that guarantees the no-scroll contract:
+  // any widget placed here automatically participates in shrink-to-fit, so future
+  // additions can't break the layout.
+  //
+  //   • Expanded      → claims exactly the leftover height (≥ 0 on all mandatory
+  //                     devices because fixed sections sum well under the budget).
+  //   • FittedBox     → scaleDown only: natural size when there's room, shrinks
+  //                     uniformly when crowded, never enlarges.
+  //   • SizedBox(W)   → pins the natural width to the full content width so rows
+  //                     (bearing/distance, etc.) lay out normally before scaling.
+  Widget _adaptiveSecondary({required List<Widget> children}) {
+    return Expanded(
+      child: LayoutBuilder(
+        builder: (_, c) => FittedBox(
+          fit: BoxFit.scaleDown,
+          alignment: Alignment.topLeft,
+          child: SizedBox(
+            width: c.maxWidth,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: children,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildPortrait(Position pos) {
     final anchoring = AnchorService.instance.isActive;
     final nav = WaypointService.instance.active;
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 14, 20, 10),
-      // Layout contract (matches landscape):
-      //   • heading + coordinates are FIXED at the top — always visible.
-      //   • the middle (city, nav waypoint, anchor card) is a scrollable region
-      //     that shrinks/scrolls instead of overlapping its neighbours.  A 2-line
-      //     city name, VHF/call-sign rows, nav + anchor all coexist safely here.
-      //   • the MOB card/button is FIXED at the bottom — always reachable.
+      // ── Layout contract (see CONSTITUTION §3) ───────────────────────────
+      //   FIXED top    : heading + coordinates — always full size, always visible.
+      //   ADAPTIVE mid : city + nav + anchor — shrinks uniformly to the leftover
+      //                  space (FittedBox scaleDown). Never scrolls, never overlaps.
+      //   FIXED bottom : MOB — always full size, always reachable.
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1374,28 +1405,20 @@ class _HomeScreenState extends State<HomeScreen>
           _divider(),
           _coordsSection(),
           _divider(),
-          Expanded(
-            child: SingleChildScrollView(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (_nearestCity != null)
-                    anchoring
-                        ? _citySectionCompact(_nearestCity!)
-                        : _citySection(_nearestCity!),
-                  if (anchoring) ...[
-                    _navWptCompact(pos),
-                    const SizedBox(height: 4),
-                    _anchorCard(true),
-                  ] else if (nav != null) ...[
-                    const SizedBox(height: 8),
-                    _navWptCard(pos, nav, portrait: true),
-                  ],
-                ],
-              ),
-            ),
-          ),
+          _adaptiveSecondary(children: [
+            if (_nearestCity != null)
+              anchoring
+                  ? _citySectionCompact(_nearestCity!)
+                  : _citySection(_nearestCity!),
+            if (anchoring) ...[
+              _navWptCompact(pos),
+              const SizedBox(height: 4),
+              _anchorCard(true),
+            ] else if (nav != null) ...[
+              const SizedBox(height: 8),
+              _navWptCard(pos, nav, portrait: true),
+            ],
+          ]),
           const SizedBox(height: 8),
           _mobSection(pos: pos, portrait: true),
         ],
@@ -1510,34 +1533,27 @@ class _HomeScreenState extends State<HomeScreen>
                 border: Border(left: BorderSide(color: _cDivider, width: 1)),
               ),
               padding: const EdgeInsets.only(left: 14),
-              // Column: scrollable top (city + nav) + fixed bottom (MOB).
+              // Adaptive middle (shrinks to fit) + fixed-bottom MOB — same
+              // no-scroll contract as portrait.
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Expanded(
-                    child: SingleChildScrollView(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          if (_nearestCity != null) ...[
-                            AnchorService.instance.isActive
-                                ? _citySectionCompact(_nearestCity!)
-                                : _citySectionLandscape(_nearestCity!),
-                            _dividerCompact(),
-                          ],
-                          if (!AnchorService.instance.isActive)
-                            _navWptSectionLandscape(pos),
-                          if (AnchorService.instance.isActive) ...[
-                            _navWptCompact(pos),   // compact waypoint bearing row
-                            const SizedBox(height: 4),
-                            _anchorCard(false),
-                            const SizedBox(height: 4),
-                          ],
-                        ],
-                      ),
-                    ),
-                  ),
+                  _adaptiveSecondary(children: [
+                    if (_nearestCity != null) ...[
+                      AnchorService.instance.isActive
+                          ? _citySectionCompact(_nearestCity!)
+                          : _citySectionLandscape(_nearestCity!),
+                      _dividerCompact(),
+                    ],
+                    if (!AnchorService.instance.isActive)
+                      _navWptSectionLandscape(pos),
+                    if (AnchorService.instance.isActive) ...[
+                      _navWptCompact(pos),
+                      const SizedBox(height: 4),
+                      _anchorCard(false),
+                      const SizedBox(height: 4),
+                    ],
+                  ]),
                   _mobSection(pos: pos, portrait: false),
                 ],
               ),
