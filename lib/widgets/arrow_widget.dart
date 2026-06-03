@@ -37,21 +37,23 @@ class _ArrowPainter extends CustomPainter {
 
     final cx = size.width / 2;
     final cy = size.height / 2;
-    final r = size.width / 2 * 0.88;
+    final rr = size.width / 2;
 
     canvas.save();
     canvas.translate(cx, cy);
     canvas.rotate(bearingDeg * pi / 180);
 
-    // Arrow pointing up: wide triangle head + slim rectangular shaft
+    // Compass-needle / chevron arrow: a sharp head pointing "up" (the bearing)
+    // with a concave notch at the centre.  Matches the floating-overlay compass.
+    const sin140 = 0.6428; // sin(140°)
+    const cos140 = -0.7660; // cos(140°)
+    final tip  = rr * 0.92;
+    final barb = rr * 0.46;
     final path = Path()
-      ..moveTo(0, -r)
-      ..lineTo(r * 0.33, -r * 0.18)
-      ..lineTo(r * 0.12, -r * 0.18)
-      ..lineTo(r * 0.12, r * 0.78)
-      ..lineTo(-r * 0.12, r * 0.78)
-      ..lineTo(-r * 0.12, -r * 0.18)
-      ..lineTo(-r * 0.33, -r * 0.18)
+      ..moveTo(0, -tip)                              // tip (heading)
+      ..lineTo(sin140 * barb, -cos140 * barb)        // right barb (back-right)
+      ..lineTo(0, 0)                                 // centre notch
+      ..lineTo(-sin140 * barb, -cos140 * barb)       // left barb (back-left)
       ..close();
 
     canvas.drawPath(path, paint);

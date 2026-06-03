@@ -403,7 +403,7 @@ class _HomeScreenState extends State<HomeScreen>
       _cachedAlt = pos.altitude;
       _cachedAccuracy = pos.accuracy;
       _gpsClockOffset = pos.timestamp.difference(DateTime.now());
-      AnchorService.instance.forwardPosition(pos.latitude, pos.longitude);
+      AnchorService.instance.forwardPosition(pos.latitude, pos.longitude, pos.accuracy);
       setState(() {
         _position = pos;
         _gpsStaleSeconds = 0;
@@ -494,7 +494,7 @@ class _HomeScreenState extends State<HomeScreen>
     if (_gpsStaleSeconds > 0) _gpsStaleSeconds = 0;
     // Forward the (reliable, fused) foreground fix to the native anchor authority
     // so its GPS-loss timer is reset by the most reliable source available.
-    AnchorService.instance.forwardPosition(pos.latitude, pos.longitude);
+    AnchorService.instance.forwardPosition(pos.latitude, pos.longitude, pos.accuracy);
 
     // GPS course is usable above ~0.5 m/s; cache at lower threshold so the
     // secondary arrow appears even at walking pace.

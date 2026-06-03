@@ -344,7 +344,8 @@ class MainActivity : FlutterActivity(), SensorEventListener {
                         // GPS-loss timer is reset by the most reliable source.
                         AnchorController.onPosition(
                             call.argument<Double>("lat") ?: 0.0,
-                            call.argument<Double>("lon") ?: 0.0)
+                            call.argument<Double>("lon") ?: 0.0,
+                            call.argument<Double>("acc") ?: -1.0)
                         result.success(null)
                     }
                     "getBatteryLevel" -> {

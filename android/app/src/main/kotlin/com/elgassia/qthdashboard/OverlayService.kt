@@ -8,22 +8,35 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.graphics.PixelFormat
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
 import android.os.Build
 import android.os.IBinder
+import android.os.SystemClock
 import android.provider.Settings
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import kotlin.math.abs
+import kotlin.math.roundToInt
 
 /**
  * Hosts the floating compass overlay ([OverlayView]) in a system window so it
- * stays on top of other apps.  Runs as a foreground service so the process (and
- * the Flutter engine pushing heading data) stays alive while the user is in
- * another app.  Only ever started when the user explicitly enables the overlay.
+ * stays on top of other apps.  Runs as a foreground service so the process stays
+ * alive while the user is in another app.  Only ever started when the user
+ * explicitly enables the overlay.
+ *
+ * Data source:
+ *   • While the Flutter app is alive it pushes rich frames via [update]
+ *     (declination-corrected heading, wind-rose mode, city, all POI dots).
+ *   • When the app is CLOSED/killed those pushes stop — so the service falls back
+ *     to its OWN compass sensor (and live [AnchorController] state) to keep the
+ *     overlay updating instead of freezing.
  */
-class OverlayService : Service() {
+class OverlayService : Service(), SensorEventListener {
 
     companion object {
         const val ACTION_SHOW = "com.elgassia.qthdashboard.OVERLAY_SHOW"
@@ -39,6 +52,14 @@ class OverlayService : Service() {
     private var wm: WindowManager? = null
     private var view: OverlayView? = null
     private lateinit var params: WindowManager.LayoutParams
+
+    // Native compass fallback (used when Flutter stops pushing).
+    private var sensorManager: SensorManager? = null
+    private var rotationSensor: Sensor? = null
+    @Volatile private var lastFlutterUpdate = 0L
+    private var lastNativeDraw = 0L
+    private val rotMatrix = FloatArray(9)
+    private val orientation = FloatArray(3)
 
     override fun onCreate() {
         super.onCreate()
@@ -88,6 +109,58 @@ class OverlayService : Service() {
 
         attachDragAndTap(v)
         try { wm?.addView(v, params); view = v; instance = this } catch (_: Exception) { stopSelf() }
+        startCompass()
+    }
+
+    // ── Native compass fallback ─────────────────────────────────────────────────
+
+    private fun startCompass() {
+        sensorManager = getSystemService(SENSOR_SERVICE) as SensorManager
+        rotationSensor = sensorManager?.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
+        rotationSensor?.let {
+            sensorManager?.registerListener(this, it, SensorManager.SENSOR_DELAY_UI)
+        }
+    }
+
+    private fun stopCompass() {
+        try { sensorManager?.unregisterListener(this) } catch (_: Exception) {}
+        sensorManager = null
+    }
+
+    override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
+
+    override fun onSensorChanged(event: SensorEvent) {
+        if (event.sensor.type != Sensor.TYPE_ROTATION_VECTOR) return
+        // Only drive natively when Flutter has stopped pushing (app closed/killed).
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastFlutterUpdate < 1500L) return
+        if (now - lastNativeDraw < 150L) return   // throttle ~6–7 Hz
+        lastNativeDraw = now
+
+        SensorManager.getRotationMatrixFromVector(rotMatrix, event.values)
+        SensorManager.getOrientation(rotMatrix, orientation)
+        val heading = ((Math.toDegrees(orientation[0].toDouble()) + 360.0) % 360.0)
+
+        val v = view ?: return
+        v.heading = heading.toFloat()
+        v.headingValid = true
+        // Keep the last colours/mode pushed by Flutter; refresh live anchor data.
+        if (AnchorController.active) {
+            v.line1 = when (AnchorController.level) {
+                2 -> "⚓ ANCHOR ALARM"
+                1 -> "⚓ Anchor warning"
+                else -> "⚓ Anchor OK"
+            }
+            v.line2 = if (AnchorController.gpsLossSeconds >= 10)
+                "GPS lost ${AnchorController.gpsLossSeconds}s"
+            else
+                "${AnchorController.distanceM.roundToInt()} m / ${AnchorController.radiusM.roundToInt()} m"
+            // One dot toward the anchor (MOB-style: red, large).
+            v.markerBearings = doubleArrayOf(AnchorController.bearingDeg)
+            v.markerColors = intArrayOf(v.northColor)
+            v.markerScales = doubleArrayOf(1.45)
+        }
+        v.applyData()
     }
 
     private fun attachDragAndTap(v: View) {
@@ -130,6 +203,7 @@ class OverlayService : Service() {
     }
 
     private fun teardown() {
+        stopCompass()
         try { view?.let { wm?.removeView(it) } } catch (_: Exception) {}
         view = null
         instance = null
@@ -147,6 +221,7 @@ class OverlayService : Service() {
         bgColor: Long, textColor: Long, subColor: Long,
         markerBearings: DoubleArray, markerColors: IntArray, markerScales: DoubleArray,
     ) {
+        lastFlutterUpdate = SystemClock.elapsedRealtime() // Flutter is alive → it drives
         val v = view ?: return
         v.heading = heading.toFloat()
         v.headingValid = headingValid

@@ -132,9 +132,11 @@ class AnchorService {
 
   /// Forward a (reliable, fused) foreground GPS fix to the native authority so
   /// the GPS-loss timer is reset by the most reliable source available.
-  void forwardPosition(double lat, double lon) {
+  /// [accuracyM] lets the native side reject coarse fixes for distance.
+  void forwardPosition(double lat, double lon, double accuracyM) {
     if (!_active) return;
-    _ch.invokeMethod('forwardPosition', {'lat': lat, 'lon': lon}).catchError((_) {});
+    _ch.invokeMethod('forwardPosition',
+        {'lat': lat, 'lon': lon, 'acc': accuracyM}).catchError((_) {});
   }
 
   void silenceAlarm() {

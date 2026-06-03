@@ -96,20 +96,20 @@ x2 = CX
 y2 = CY - RING_R + POINTER_LEN
 draw.line([(x1, y1), (x2, y2)], fill=NORTH_RED, width=16)
 
-# ── Heading arrow (green, pointing up — same shape as ArrowWidget) ────────────
-AR = HALF * 0.58   # arrow radius (tip distance from centre)
+# ── Heading needle (green, pointing up — same chevron shape as ArrowWidget) ───
+AR = HALF * 0.62   # tip distance from centre
 
 def ap(dx, dy):
     return (CX + dx * AR, CY + dy * AR)
 
+# Compass-needle / chevron: tip up, concave notch at centre.  sin140≈0.6428,
+# cos140≈-0.7660 → back barbs at ±140° from "up".
+_B = 0.50  # barb radius as a fraction of AR
 ARROW = [
-    ap( 0.000, -1.000),  # tip
-    ap( 0.330, -0.200),  # right wing outer
-    ap( 0.110, -0.200),  # right wing inner / shaft
-    ap( 0.110,  0.740),  # shaft bottom-right
-    ap(-0.110,  0.740),  # shaft bottom-left
-    ap(-0.110, -0.200),  # left wing inner / shaft
-    ap(-0.330, -0.200),  # left wing outer
+    ap( 0.0000, -1.0000),              # tip (heading)
+    ap( 0.6428 * _B, 0.7660 * _B),     # right barb (back-right)
+    ap( 0.0000,  0.0000),              # centre notch
+    ap(-0.6428 * _B, 0.7660 * _B),     # left barb (back-left)
 ]
 
 # Soft green glow layer
@@ -121,8 +121,8 @@ draw = ImageDraw.Draw(img)
 # Arrow body
 draw.polygon(ARROW, fill=GPS_GREEN)
 
-# Highlight on tip's left edge for depth
-draw.polygon([ap(0, -1), ap(0, -0.2), ap(-0.11, -0.2), ap(-0.33, -0.2)],
+# Highlight on the left half of the needle for depth
+draw.polygon([ap(0, -1), ap(0, 0), ap(-0.6428 * _B, 0.7660 * _B)],
              fill=GPS_HILITE)
 
 # ── Centre dot ────────────────────────────────────────────────────────────────

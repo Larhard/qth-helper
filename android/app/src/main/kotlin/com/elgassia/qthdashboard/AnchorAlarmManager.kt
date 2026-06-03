@@ -63,7 +63,8 @@ class AnchorAlarmManager private constructor(private val appCtx: Context) {
 
     // ── Audio ─────────────────────────────────────────────────────────────────
     private val audioManager by lazy { appCtx.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
-    private var loopTrack: AudioTrack? = null      // the single continuous alarm/test track
+    private var loopTrack: AudioTrack? = null      // continuous alarm/test track (speaker)
+    private var loopCompanion: AudioTrack? = null  // optional headphone/BT track (non-blocking)
     private var audioFocusRequest: android.media.AudioFocusRequest? = null
     // Keep one-shot warning tracks alive until they finish, then release.
     private val oneShotTracks = mutableListOf<AudioTrack>()
@@ -260,13 +261,35 @@ class AnchorAlarmManager private constructor(private val appCtx: Context) {
         return track
     }
 
+    /** True when headphones / Bluetooth / USB audio output is connected. */
+    private fun hasExternalOutput(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return false
+        return try {
+            audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).any {
+                it.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP ||
+                it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO  ||
+                it.type == AudioDeviceInfo.TYPE_WIRED_HEADPHONES ||
+                it.type == AudioDeviceInfo.TYPE_WIRED_HEADSET    ||
+                it.type == AudioDeviceInfo.TYPE_USB_HEADSET
+            }
+        } catch (_: Exception) { false }
+    }
+
     /**
      * Continuous alarm siren via ON-THE-FLY synthesis (no looping buffer).
      *
      * A dedicated max-priority thread generates samples with persistent phase
      * accumulators, so there is NEVER a loop-boundary discontinuity — the source
-     * of the "breaking up" artefact.  ONE speaker-pinned track only — no companion
-     * — so there is no comb-filtering / "duplicated" sound.
+     * of the "breaking up" artefact.
+     *
+     * Output routing:
+     *   • Primary track is pinned to the BUILT-IN SPEAKER (blocking writes pace
+     *     the loop) — always audible in the room, even with headphones on.
+     *   • A companion track on the DEFAULT route is added ONLY when an external
+     *     output (BT/wired/USB) is connected, fed with NON-BLOCKING writes so it
+     *     can never stall the speaker.  Because the two tracks then play to
+     *     DIFFERENT physical outputs there is no comb-filtering / "duplicated"
+     *     sound (the bug was two tracks on the one speaker).
      *
      * Timbre: two oscillators a tritone (√2) apart, the fundamental sweeping
      * 400→1200 Hz at 0.5 Hz, summed and hard-clipped — deliberately harsh.
@@ -277,10 +300,15 @@ class AnchorAlarmManager private constructor(private val appCtx: Context) {
         requestFocus(exclusive = maxVolume)
         feeding = true
         try {
-            val track = newStreamTrack(volumeScale)
-            pinToSpeaker(track)
-            track.play()
-            loopTrack = track
+            val speaker = newStreamTrack(volumeScale)
+            pinToSpeaker(speaker)
+            speaker.play()
+            loopTrack = speaker
+
+            val companion = if (hasExternalOutput()) {
+                newStreamTrack(volumeScale).also { it.play(); loopCompanion = it }
+            } else null
+
             feederThread = Thread {
                 val twoPi = 2 * Math.PI
                 var phase1 = 0.0
@@ -302,7 +330,9 @@ class AnchorAlarmManager private constructor(private val appCtx: Context) {
                             chunk[i] = (s * Short.MAX_VALUE).toInt().toShort()
                             n++
                         }
-                        if (track.write(chunk, 0, chunk.size) < 0) break // blocking
+                        if (speaker.write(chunk, 0, chunk.size) < 0) break // blocking — paces loop
+                        // Best-effort feed to headphones; never blocks the speaker.
+                        companion?.write(chunk, 0, chunk.size, AudioTrack.WRITE_NON_BLOCKING)
                     }
                 } catch (_: Exception) {}
             }.apply { isDaemon = true; priority = Thread.MAX_PRIORITY; start() }
@@ -331,12 +361,15 @@ class AnchorAlarmManager private constructor(private val appCtx: Context) {
 
     private fun stopAudio() {
         feeding = false
-        // Stopping the track unblocks the feeder thread parked in write().
+        // Stopping the tracks unblocks the feeder thread parked in write().
         try { loopTrack?.stop() } catch (_: Exception) {}
+        try { loopCompanion?.stop() } catch (_: Exception) {}
         try { feederThread?.join(200) } catch (_: Exception) {}
         feederThread = null
         try { loopTrack?.release() } catch (_: Exception) {}
+        try { loopCompanion?.release() } catch (_: Exception) {}
         loopTrack = null
+        loopCompanion = null
         for (t in oneShotTracks.toList()) { try { t.stop(); t.release() } catch (_: Exception) {} }
         oneShotTracks.clear()
         abandonFocus()

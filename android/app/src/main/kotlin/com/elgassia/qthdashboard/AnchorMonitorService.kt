@@ -126,7 +126,8 @@ class AnchorMonitorService : Service() {
     }
 
     private val locationListener = LocationListener { loc ->
-        AnchorController.onPosition(loc.latitude, loc.longitude)
+        val acc = if (loc.hasAccuracy()) loc.accuracy.toDouble() else -1.0
+        AnchorController.onPosition(loc.latitude, loc.longitude, acc)
     }
 
     // ── 1 s ticker — drives the GPS-loss timer ─────────────────────────────────

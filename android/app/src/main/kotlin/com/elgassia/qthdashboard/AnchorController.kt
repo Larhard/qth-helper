@@ -42,6 +42,9 @@ object AnchorController {
     private var batteryFloor = 0
     private var lastFixElapsed = 0L      // SystemClock.elapsedRealtime of last fix
     private var alarm: AnchorAlarmManager? = null
+    // Position-derived level with hysteresis (separate from the combined `level`)
+    // so GPS jitter around the boundary can't make the alarm chatter on/off.
+    private var posLevel = 0
 
     /** Service sets this to refresh its notification when state changes. */
     var onStateChanged: (() -> Unit)? = null
@@ -56,7 +59,7 @@ object AnchorController {
         this.radiusM = radiusM; this.warnFrac = warnFrac
         active = true
         distanceM = 0.0; bearingDeg = 0.0
-        gpsLossSeconds = 0; level = 0; silenced = false
+        gpsLossSeconds = 0; level = 0; posLevel = 0; silenced = false
         batteryFloor = 0; hasFix = false
         lastFixElapsed = SystemClock.elapsedRealtime()
         onStateChanged?.invoke()
@@ -64,7 +67,7 @@ object AnchorController {
 
     fun stopAll() {
         active = false
-        level = 0; silenced = false; batteryFloor = 0
+        level = 0; posLevel = 0; silenced = false; batteryFloor = 0
         gpsLossSeconds = 0; hasFix = false
         alarm?.stop()
         onStateChanged?.invoke()
@@ -72,16 +75,31 @@ object AnchorController {
 
     // ── Inputs ──────────────────────────────────────────────────────────────────
 
-    /** A fresh GPS fix (from the service's GPS or forwarded from the foreground). */
-    fun onPosition(lat: Double, lon: Double) {
+    /**
+     * A fresh GPS fix.  [accuracyM] is the horizontal accuracy in metres
+     * (< 0 if unknown).
+     *
+     * ANY fix resets the GPS-loss timer (liveness — a coarse NETWORK fix still
+     * proves the receiver is alive).  But the anchor DISTANCE is only updated from
+     * a sufficiently ACCURATE fix: a wildly inaccurate NETWORK fix (off by 100s of
+     * metres) would otherwise momentarily compute a huge distance and flash the
+     * alarm even while the boat is sitting well inside the radius.
+     */
+    fun onPosition(lat: Double, lon: Double, accuracyM: Double = -1.0) {
         if (!active) return
-        val d = FloatArray(2)
-        Location.distanceBetween(lat, lon, this.lat, this.lon, d)
-        distanceM = d[0].toDouble()
-        bearingDeg = ((d[1] + 360.0) % 360.0)
-        hasFix = true
         lastFixElapsed = SystemClock.elapsedRealtime()
         gpsLossSeconds = 0
+
+        // Accept the position only if accuracy is good enough to trust the distance.
+        // Gate = max(15 m, 50 % of radius): rejects coarse cell/wifi fixes.
+        val gate = maxOf(15.0, radiusM * 0.5)
+        if (accuracyM in 0.0..gate || accuracyM < 0) {
+            val d = FloatArray(2)
+            Location.distanceBetween(lat, lon, this.lat, this.lon, d)
+            distanceM = d[0].toDouble()
+            bearingDeg = ((d[1] + 360.0) % 360.0)
+            hasFix = true
+        }
         recompute()
     }
 
@@ -122,18 +140,13 @@ object AnchorController {
     // ── Core logic ────────────────────────────────────────────────────────────────
 
     private fun recompute() {
-        val positionLevel = when {
-            !hasFix                          -> 0   // no fix yet → rely on GPS-loss timer
-            distanceM >= radiusM             -> 2
-            distanceM >= radiusM * warnFrac  -> 1
-            else                             -> 0
-        }
+        posLevel = positionLevelWithHysteresis()
         val gpsLossLevel = when {
             gpsLossSeconds >= 180 -> 2
             gpsLossSeconds >= 60  -> 1
             else                  -> 0
         }
-        val newLevel = maxOf(positionLevel, gpsLossLevel, batteryFloor)
+        val newLevel = maxOf(posLevel, gpsLossLevel, batteryFloor)
 
         // Escalation un-silences so the louder level can sound.
         if (newLevel > level) silenced = false
@@ -146,6 +159,26 @@ object AnchorController {
         if (!silenced) applyHardware()
         if (changed && newLevel == 2) onAlarmEscalated?.invoke()
         if (changed) onStateChanged?.invoke()
+    }
+
+    /**
+     * Position level with hysteresis: a level, once entered, is only LEFT once the
+     * boat comes back inside by a margin.  Without this, GPS jitter while physically
+     * stationary near the radius makes the alarm flip on/off ("blinking").
+     *
+     *   enter alarm:   dist ≥ radius           leave alarm:   dist < radius − margin
+     *   enter warning: dist ≥ warnFrac·radius  leave warning: dist < warnFrac·radius − margin
+     */
+    private fun positionLevelWithHysteresis(): Int {
+        if (!hasFix) return 0  // no fix → the GPS-loss timer governs the level
+        val margin = maxOf(5.0, radiusM * 0.05)            // ≥5 m or 5 % of radius
+        val alarmThresh = if (posLevel >= 2) radiusM - margin else radiusM
+        val warnThresh  = if (posLevel >= 1) radiusM * warnFrac - margin else radiusM * warnFrac
+        return when {
+            distanceM >= alarmThresh -> 2
+            distanceM >= warnThresh  -> 1
+            else                     -> 0
+        }
     }
 
     private fun applyHardware() {
